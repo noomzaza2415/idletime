@@ -17,14 +17,23 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.noomzaza.idletime",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      },
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withGradleDaemonJvm",
       "expo-router",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {
@@ -32,11 +41,37 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ให้ Idle Time Tracker เข้าถึงคลังภาพ เพื่อแนบรูปจุดที่ไลน์หยุด",
+          "cameraPermission": "ให้ Idle Time Tracker ใช้กล้อง เพื่อถ่ายรูปจุดที่ไลน์หยุด",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ca9a8fb3-fbc4-4397-bb74-98df29e86c0f"
+      }
+    },
+    "owner": "noomzaza",
+    "updates": {
+      "url": "https://u.expo.dev/ca9a8fb3-fbc4-4397-bb74-98df29e86c0f"
     }
   }
 }
