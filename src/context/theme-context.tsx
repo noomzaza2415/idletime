@@ -41,14 +41,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.setItem(STORAGE_KEY, next);
   }, []);
 
-  const toggleMode = useCallback(async () => {
-    let next: ThemeMode = DEFAULT_MODE;
-    setModeState((prev) => {
-      next = prev === 'dark' ? 'light' : 'dark';
-      return next;
-    });
-    await AsyncStorage.setItem(STORAGE_KEY, next);
-  }, []);
+  /**
+   * คำนวณโหมดถัดไปจาก mode ของรอบ render นี้ ไม่ใช่จากใน updater ของ setState
+   * เพราะ React ไม่รับประกันว่า updater จะรันทันที ค่าที่บันทึกลง storage
+   * อาจยังเป็นค่าตั้งต้น แล้วเปิดแอปครั้งหน้าธีมจะเด้งกลับเป็นอีกโหมด
+   */
+  const toggleMode = useCallback(
+    () => setMode(mode === 'dark' ? 'light' : 'dark'),
+    [mode, setMode]
+  );
 
   const value = useMemo(
     () => ({ mode, colors: PALETTES[mode], isDark: mode === 'dark', setMode, toggleMode }),

@@ -9,16 +9,56 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { font, radius, spacing } from '@/constants/theme';
+import { font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import { useTheme } from '@/context/theme-context';
 
-/**
- * สีจากดีไซน์ต้นฉบับ (Uiverse) ตรึงไว้ไม่ผูกกับธีมของแอป
- * เพราะทั้งชุดตั้งอยู่บนพื้นดำ ถ้าดึงสีจากธีมสว่างมาใช้ เอฟเฟกต์เรืองแสงจะหายไปหมด
- */
-const INK = '#010201';
+/** สีเส้นวิ่งรอบขอบจากดีไซน์ต้นฉบับ (Uiverse) ใช้ทั้งสองโหมด */
 const INDIGO = '#402fb5';
 const PINK = '#cf30aa';
-const PLACEHOLDER = '#c0b9c0';
+
+/**
+ * ชุดสีของช่องค้นหาแยกตามโหมด
+ *
+ * โหมดมืดคงสีต้นฉบับทุกค่า เพราะดีไซน์ตั้งอยู่บนพื้นดำ
+ * โหมดสว่างต้องมีชุดของตัวเอง เดิมใช้ชุดดำร่วมกัน แสงฟุ้งที่ไล่จากสีดำจึงกลายเป็น
+ * คราบเทาบนพื้นสว่าง และได้กล่องดำกลางหน้าจอขาวที่ดูเหมือนแสดงผลพัง
+ * แสงฟุ้งโหมดสว่างจึงไล่จากสีโปร่งใสแทน ให้เหลือแค่สีม่วงชมพูจาง ๆ
+ */
+function createPalette(c: ThemeColors, isDark: boolean) {
+  if (isDark) {
+    const ink = '#010201';
+    return {
+      field: ink,
+      text: '#ffffff',
+      placeholder: '#c0b9c0',
+      glow: [ink, INDIGO, ink, ink, PINK, ink],
+      glowOpacity: 0.35,
+      glowFocusBoost: 0.4,
+      ringBase: '#1c191c',
+      pinkMaskOpacity: 0.25,
+      reset: ['#161329', '#000000', '#1d1b4b'],
+      resetBorder: '#3d3a4f',
+      resetLine: '#c0b9c0',
+    } as const;
+  }
+  const clear = 'rgba(255,255,255,0)';
+  return {
+    field: c.surface,
+    text: c.textPrimary,
+    // textSecondary บนพื้นขาวได้ 4.8:1 ผ่านเกณฑ์อ่านได้ ต่างจากเทาอมชมพูของต้นฉบับที่จางเกินไป
+    placeholder: c.textSecondary,
+    glow: [clear, INDIGO, clear, clear, PINK, clear],
+    glowOpacity: 0.18,
+    glowFocusBoost: 0.3,
+    ringBase: c.border,
+    pinkMaskOpacity: 0.1,
+    reset: ['#EEF2FF', '#FFFFFF', '#E0E7FF'],
+    resetBorder: c.border,
+    resetLine: c.textSecondary,
+  } as const;
+}
+
+type Palette = ReturnType<typeof createPalette>;
 
 const HEIGHT = 56;
 /** วงไล่สีต้องใหญ่กว่ากรอบมาก เพื่อให้หมุนแล้วยังคลุมเต็มทุกมุม */
@@ -45,7 +85,9 @@ interface Props {
  * ส่วนแสงฟุ้งใช้แผ่นสีโปร่งขนาดใหญ่กว่ากรอบซ้อนไว้ด้านหลังแทนการเบลอจริง
  */
 export default function SearchField({ value, onChangeText, placeholder, clearLabel }: Props) {
-  const styles = useMemo(() => createStyles(), []);
+  const { colors: c, isDark } = useTheme();
+  const palette = useMemo(() => createPalette(c, isDark), [c, isDark]);
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const spin = useSharedValue(0);
   const focus = useSharedValue(0);
 
@@ -72,7 +114,11 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
     transform: [{ rotate: `${spin.value * 360 + 60}deg` }],
   }));
 
-  const glowStyle = useAnimatedStyle(() => ({ opacity: 0.35 + focus.value * 0.4 }));
+  // อ่านค่าเป็นตัวเลขนอก worklet เพราะ worklet ใช้ได้เฉพาะค่าที่ส่งเข้าไปได้
+  const { glowOpacity, glowFocusBoost } = palette;
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowOpacity + focus.value * glowFocusBoost,
+  }));
 
   return (
     <View style={styles.wrap}>
@@ -80,7 +126,7 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
       <Animated.View style={[styles.glow, glowStyle]} pointerEvents="none">
         <Animated.View style={[styles.ringBox, glowRing]}>
           <LinearGradient
-            colors={[INK, INDIGO, INK, INK, PINK, INK]}
+            colors={palette.glow}
             locations={[0, 0.08, 0.32, 0.5, 0.68, 0.95]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -93,7 +139,14 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
       <View style={styles.borderClip} pointerEvents="none">
         <Animated.View style={[styles.ringBox, borderRing]}>
           <LinearGradient
-            colors={['#1c191c', INDIGO, '#1c191c', '#1c191c', PINK, '#1c191c']}
+            colors={[
+              palette.ringBase,
+              INDIGO,
+              palette.ringBase,
+              palette.ringBase,
+              PINK,
+              palette.ringBase,
+            ]}
             locations={[0, 0.05, 0.14, 0.5, 0.6, 0.64]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -102,7 +155,7 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
         </Animated.View>
       </View>
 
-      {/* พื้นดำทับตรงกลาง เหลือขอบสีไว้เป็นเส้นบาง ๆ รอบนอก */}
+      {/* พื้นทึบทับตรงกลาง เหลือขอบสีไว้เป็นเส้นบาง ๆ รอบนอก */}
       <View style={styles.field}>
         <View style={styles.searchIcon}>
           <View style={styles.searchLens} />
@@ -117,7 +170,7 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
-          placeholderTextColor={PLACEHOLDER}
+          placeholderTextColor={palette.placeholder}
           onFocus={() => animateFocus(1)}
           onBlur={() => animateFocus(0)}
           // work order เป็นรหัสตัวพิมพ์ใหญ่ผสมตัวเลข ปิด autocorrect ไม่ให้แก้คำมั่ว
@@ -136,7 +189,7 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
             accessibilityLabel={clearLabel}
             style={styles.reset}>
             <LinearGradient
-              colors={['#161329', '#000000', '#1d1b4b']}
+              colors={palette.reset}
               style={StyleSheet.absoluteFill}
             />
             <View style={styles.resetLine} />
@@ -148,7 +201,7 @@ export default function SearchField({ value, onChangeText, placeholder, clearLab
   );
 }
 
-const createStyles = () =>
+const createStyles = (p: Palette) =>
   StyleSheet.create({
     wrap: {
       height: HEIGHT,
@@ -190,7 +243,7 @@ const createStyles = () =>
       height: HEIGHT - 3,
       marginHorizontal: 1.5,
       paddingHorizontal: spacing.md,
-      backgroundColor: INK,
+      backgroundColor: p.field,
       borderRadius: 10,
       overflow: 'hidden',
     },
@@ -200,7 +253,7 @@ const createStyles = () =>
       height: 14,
       borderRadius: 7,
       borderWidth: 2,
-      borderColor: PLACEHOLDER,
+      borderColor: p.placeholder,
     },
     searchHandle: {
       position: 'absolute',
@@ -209,7 +262,7 @@ const createStyles = () =>
       width: 8,
       height: 2,
       borderRadius: 1,
-      backgroundColor: PLACEHOLDER,
+      backgroundColor: p.placeholder,
       transform: [{ rotate: '45deg' }],
     },
     pinkMask: {
@@ -220,14 +273,14 @@ const createStyles = () =>
       height: 28,
       borderRadius: 20,
       backgroundColor: PINK,
-      opacity: 0.25,
+      opacity: p.pinkMaskOpacity,
     },
     input: {
       flex: 1,
       height: '100%',
       paddingHorizontal: spacing.xs,
       fontSize: font.body,
-      color: '#ffffff',
+      color: p.text,
     },
     reset: {
       width: 38,
@@ -236,7 +289,7 @@ const createStyles = () =>
       justifyContent: 'center',
       borderRadius: radius.sm,
       borderWidth: 1,
-      borderColor: '#3d3a4f',
+      borderColor: p.resetBorder,
       overflow: 'hidden',
       marginLeft: spacing.sm,
     },
@@ -245,7 +298,7 @@ const createStyles = () =>
       width: 15,
       height: 2,
       borderRadius: 1,
-      backgroundColor: '#c0b9c0',
+      backgroundColor: p.resetLine,
       transform: [{ rotate: '45deg' }],
     },
     resetLineFlipped: { transform: [{ rotate: '-45deg' }] },
