@@ -87,6 +87,22 @@ export function useNow(active: boolean) {
   return now;
 }
 
+/**
+ * นาฬิกาบนป้ายเวลาปัจจุบัน เดินทุกวินาทีแบบ playhead ของเว็บ
+ *
+ * แยกเป็นคอมโพเนนต์เล็กของตัวเอง ให้ทุกวินาทีวาดใหม่แค่ข้อความนี้
+ * ถ้าไปเร่ง useNow ของทั้งแถบเป็นทุกวินาที ช่วงหยุดหลายสิบชิ้นจะถูกวาดใหม่ทุกวินาทีไปด้วย
+ * ส่วนตำแหน่งขอบขวาของแถบยังขยับทุก 30 วินาทีเท่าเดิม ต่างกันไม่ถึงครึ่งพิกเซลบนจอ
+ */
+function LiveClock({ prefix }: { prefix: string }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <>{`${prefix}${hhmmss(now)}`}</>;
+}
+
 /** สีของแต่ละสถานะ ใช้ร่วมกันระหว่างแถบ คำอธิบายสี และตัวเลขสรุป */
 export function statusColors(c: ThemeColors, isDark: boolean) {
   return {
@@ -106,8 +122,13 @@ const BAR_DIMS = {
 
 interface TimelineBarProps {
   view: TimelineView;
-  /** ข้อความบนป้ายที่ขอบขวา เช่น "ตอนนี้ 14:04" หรือเวลาสุดช่วงของกะย้อนหลัง */
-  endLabel: string;
+  /**
+   * true = ขอบขวาคือเวลาปัจจุบัน ป้ายเดินทุกวินาทีแบบเดียวกับ playhead ของเว็บ
+   * false = กะย้อนหลังหรือเลยสุดช่วงที่เลือกแล้ว ป้ายแสดงเวลาสุดช่วงนิ่ง ๆ
+   */
+  live: boolean;
+  /** คำนำหน้าบนป้าย เช่น "ตอนนี้" ไม่ส่งมาก็แสดงแค่เวลา */
+  endPrefix?: string;
   size: 'card' | 'full';
   /** 1 = เห็นทั้งช่วง มากกว่า 1 = ขยายแล้วลากเลื่อนได้ */
   zoom?: number;
@@ -121,7 +142,8 @@ interface TimelineBarProps {
 /** แถบเวลาของกะ: ป้ายเวลา เส้นแบ่งชั่วโมง ช่วงหยุด/พัก และป้ายเวลาสุดช่วง */
 export function TimelineBar({
   view,
-  endLabel,
+  live,
+  endPrefix,
   size,
   zoom = 1,
   selectedId = null,
@@ -144,7 +166,9 @@ export function TimelineBar({
   const span = displayEnd - view.start;
   const toX = (ms: number) => ((ms - view.start) / span) * width;
   const endX = toX(view.end);
-  const pillWidth = Math.max(d.labelWidth + 8, endLabel.length * d.label * 0.62 + 16);
+  const prefix = endPrefix ? `${endPrefix} ` : '';
+  // กว้างตามรูปแบบ HH:MM:SS ที่ยาวคงที่ ป้ายจะได้ไม่ขยับซ้ายขวาทุกวินาที
+  const pillWidth = Math.max(d.labelWidth + 8, (prefix.length + 8) * d.label * 0.62 + 16);
 
   /**
    * ซูมแล้วคงจุดที่กำลังดูไว้ ไม่ให้แถบกระโดดกลับไปต้นกะ เหมือนที่เว็บคงตำแหน่งตามเมาส์
@@ -222,7 +246,7 @@ export function TimelineBar({
         ))}
         <View style={[styles.endPill, { left: pillLeft, width: pillWidth }]}>
           <Text style={styles.endPillText} numberOfLines={1}>
-            {endLabel}
+            {live ? <LiveClock prefix={prefix} /> : `${prefix}${hhmmss(view.end)}`}
           </Text>
         </View>
       </View>
@@ -324,7 +348,7 @@ export default function LineStatusTimeline({ timeline, line, isToday, onPress }:
 
   const stopLabel = `${t('timelineStop')} ${Math.round(view.stopMins)}m`;
   const breakLabel = `${t('timelineBreak')} ${Math.round(view.breakMins)}m`;
-  const endLabel = isToday && view.end === now ? hhmm(now) : hhmm(view.end);
+  const live = isToday && view.end === now;
 
   return (
     <Pressable
@@ -352,7 +376,7 @@ export default function LineStatusTimeline({ timeline, line, isToday, onPress }:
 
       {/* การ์ดแตะเพื่อเปิดเต็มจอ แถบในการ์ดจึงไม่รับการแตะเลือกช่วงเอง */}
       <View pointerEvents="none">
-        <TimelineBar view={view} endLabel={endLabel} size="card" />
+        <TimelineBar view={view} live={live} size="card" />
       </View>
     </Pressable>
   );

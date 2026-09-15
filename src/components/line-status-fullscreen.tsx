@@ -11,7 +11,6 @@ import {
   type TimelineSegment,
 } from '@/api/line-timeline';
 import {
-  hhmm,
   hhmmss,
   statusColors,
   TimelineBar,
@@ -90,8 +89,7 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
   // ช่วงที่เลือกไว้อาจหายไปเมื่อเปลี่ยนช่วงเวลาหรือข้อมูลอัปเดต ใช้ข้อมูลล่าสุดของ id เดิมเสมอ
   const current = selected ? (view.segments.find((s) => s.id === selected.id) ?? null) : null;
 
-  const endLabel =
-    isToday && view.end === now ? `${t('timelineNow')} ${hhmm(now)}` : hhmm(view.end);
+  const live = isToday && view.end === now;
   const times = (count: number) => t('timelineTimes').replace('{count}', String(count));
 
   const stats = [
@@ -263,7 +261,8 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
 
           <TimelineBar
             view={view}
-            endLabel={endLabel}
+            live={live}
+            endPrefix={live ? t('timelineNow') : undefined}
             size="full"
             zoom={zoom}
             selectedId={current?.id ?? null}
