@@ -7,18 +7,17 @@
     "icon": "./assets/images/icon.png",
     "scheme": "idletime",
     "userInterfaceStyle": "automatic",
-    "ios": {
-      "icon": "./assets/expo.icon"
-    },
+    "ios": {},
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.noomzaza.idletime",
+      "googleServicesFile": "./google-services.json",
       "runtimeVersion": {
         "policy": "appVersion"
       },
@@ -67,6 +66,10 @@
       "router": {},
       "eas": {
         "projectId": "ca9a8fb3-fbc4-4397-bb74-98df29e86c0f"
+      },
+      "firebase": {
+        "apiKey": "AIzaSyCASgfXIOOs4PuRx_H-KPs76ylScv__aMY",
+        "projectId": "idletime-3681e"
       }
     },
     "owner": "noomzaza",

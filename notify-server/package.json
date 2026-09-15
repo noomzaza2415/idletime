@@ -1,0 +1,20 @@
+{
+  "name": "idletime-notify-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "บริการแจ้งเตือน push ของ Idle Time Tracker ผ่าน Firebase Cloud Messaging",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "firebase-admin": "^13.0.2",
+    "multer": "^2.3.0"
+  }
+}

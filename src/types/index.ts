@@ -1,3 +1,5 @@
+import type { BreakRuleType } from '@/api/idle-rules';
+
 // โครงสร้างข้อมูล 1 รายการ idle time (1 แถวในตารางเว็บต้นฉบับ)
 export interface IdleTimeRecord {
   id: string; // ID รายการ (ใช้ต่อ backend จริง)
@@ -25,6 +27,12 @@ export interface IdleTimeRecord {
   remark: string;
 
   isBreakTime?: boolean; // true = ช่วงพักเบรก ไม่นับ idle จริง
+  /**
+   * ผลของกติกาช่วงพัก — 'SHOW_BUTTON' คือคาบเกี่ยวเวลาพักแบบที่ระบบตัดสินแทนไม่ได้
+   * หน้ากรอกสาเหตุจะขึ้นปุ่มให้พนักงานเลือกเองว่าเป็น Break Time หรือไม่
+   * ('HIDDEN' ไม่มีทางมาถึงหน้าจอ เพราะถูกกรองทิ้งตั้งแต่ชั้นดึงข้อมูล)
+   */
+  breakRuleType?: BreakRuleType | null;
   photoUrl?: string | null; // รูปประกอบ (ถ้ามีจากขั้นตอนถ่ายรูปหน้างาน)
   updatedAt?: string;
   updatedBy?: string;
@@ -110,6 +118,12 @@ export const IDLE_ISSUE_OPTIONS = [
   'พักเบรก',
   'อื่นๆ',
 ];
+
+/**
+ * ข้อความที่เติมให้เมื่อกด Break Time — ต้องตรงกับฝั่งเว็บ ไม่งั้นรายงานจะนับคนละกลุ่ม
+ * ใช้เป็นตัวชี้ขาดด้วยว่ารายการไหนคือช่วงพัก เพื่อให้แสดงเป็นสีเหลืองแทนสีเขียว
+ */
+export const BREAK_TIME_VALUE = 'Break Time';
 
 export const DEPT_OPTIONS = ['Production', 'Maintenance', 'QC', 'Warehouse', 'Engineering'];
 

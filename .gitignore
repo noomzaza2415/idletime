@@ -46,3 +46,13 @@ example
 .idea/
 *.iml
 .cxx/
+
+# ความลับของโปรเจกต์ — ห้ามขึ้น repo
+# ตรวจแล้วว่ายังไม่เคยถูก track จึงกันไว้ได้เลยโดยไม่ต้องถอนจากประวัติ
+google-services.json
+GoogleService-Info.plist
+
+# ไฟล์ที่ build ออกมา ขนาดหลักร้อยเมกะไบต์ ไม่ควรอยู่ใน git
+*.apk
+*.aab
+*.tar

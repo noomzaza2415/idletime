@@ -7,12 +7,14 @@ import {
   USE_MOCK_DATA,
   toCdEquip,
 } from '@/api/config';
+import { fetchRead, fetchWithTimeout } from '@/api/http';
 import {
   formatDateString,
   formatStopPoint,
   formatTimeOfDay,
   getBreakRuleType,
   getShiftWindow,
+  MIN_VISIBLE_MINS,
 } from '@/api/idle-rules';
 import { MOCK_RECORDS } from '@/api/mock-data';
 import type {
@@ -29,13 +31,18 @@ import type {
 const rawById = new Map<string, ApiIdleTimeRecord>();
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const init: RequestInit = {
     ...options,
     headers: {
       'Content-Type': 'application/json',
       ...((options.headers as Record<string, string> | undefined) ?? {}),
     },
-  });
+  };
+
+  // คำสั่งอ่านลองซ้ำได้เพราะไม่เปลี่ยนข้อมูล ส่วน PUT ห้ามลองซ้ำ เดี๋ยวบันทึกสองรอบ
+  const isRead = !options.method || options.method.toUpperCase() === 'GET';
+  const url = `${API_BASE_URL}${path}`;
+  const res = isRead ? await fetchRead(url, init) : await fetchWithTimeout(url, init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`API error ${res.status}: ${text || res.statusText}`);
@@ -64,10 +71,11 @@ async function loadShift(
   const raw = (await request<ApiIdleTimeRecord[]>(`${ENDPOINTS.records}?${qs}`)) ?? [];
   if (raw.length === 0) return [];
 
-  // อยู่ในกะ และไม่ใช่ช่วงพักที่ถูกซ่อนตามกติกา
+  // อยู่ในกะ หยุดนานพอที่จะต้องกรอกสาเหตุ และไม่ใช่ช่วงพักที่ถูกซ่อนตามกติกา
   const valid = raw.filter((item) => {
     const recordTime = new Date(item.dateTime);
     if (recordTime < shiftStart || recordTime > shiftEnd) return false;
+    if ((item.totaltimeoffMins ?? 0) <= MIN_VISIBLE_MINS) return false;
     return getBreakRuleType(item.timestartOff, item.totaltimeoffMins ?? 0) !== 'HIDDEN';
   });
 
@@ -137,6 +145,8 @@ function toIdleTimeRecord(api: ApiIdleTimeRecord, index: number): IdleTimeRecord
     startTime: formatTimeOfDay(api.timestartOff),
     endTime: formatTimeOfDay(api.timestartOn),
     totalMins: durationMins,
+
+    breakRuleType: ruleType,
 
     stopPoint: formatStopPoint(api.station, api.lineName ?? ''),
     vendor: Number(api.venDorTime ?? 0) > 0,
@@ -220,9 +230,16 @@ export async function fetchRecords(params: {
   return records.map(toIdleTimeRecord);
 }
 
+/**
+ * บันทึกรายการเดียวกลับไปที่ backend
+ *
+ * @param shiftDate วันที่ของกะ ใช้โหลดข้อมูลดิบกลับมาเมื่อ cache ในหน่วยความจำหาย
+ *   ซึ่งเกิดได้จริงเมื่อระบบฆ่าแอปทิ้งระหว่างที่ผู้ใช้ค้างอยู่หน้ากรอกสาเหตุ
+ */
 export async function updateRecord(
   id: string,
-  patch: Partial<IdleTimeRecord>
+  patch: Partial<IdleTimeRecord>,
+  shiftDate?: string
 ): Promise<IdleTimeRecord> {
   if (USE_MOCK_DATA) {
     await delay(300);
@@ -232,7 +249,13 @@ export async function updateRecord(
     return MOCK_RECORDS[idx];
   }
 
-  const raw = rawById.get(id);
+  // API เป็น PUT ทั้งก้อน จึงต้องมี record ดิบครบทุก field ก่อนส่ง
+  // ถ้า cache หายไปให้ไปโหลดมาใหม่เอง ดีกว่าโยน error แล้วทิ้งสิ่งที่ผู้ใช้พิมพ์ไว้
+  let raw = rawById.get(id);
+  if (!raw && shiftDate) {
+    await loadShift(shiftDate, 'ALL');
+    raw = rawById.get(id);
+  }
   if (!raw) throw new Error(`ไม่พบข้อมูลต้นฉบับของรายการ id=${id} กรุณาโหลดรายการใหม่`);
 
   const updated = applyPatch(raw, patch);
@@ -280,7 +303,7 @@ export async function login(
     return { token: 'mock-token-123', name: email, expiration: null };
   }
 
-  const res = await fetch(`${AUTH_BASE_URL}${AUTH_ENDPOINTS.login}`, {
+  const res = await fetchWithTimeout(`${AUTH_BASE_URL}${AUTH_ENDPOINTS.login}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),

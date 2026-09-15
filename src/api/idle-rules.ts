@@ -3,7 +3,7 @@
  * ต้องใช้ชุดเดียวกันเป๊ะ ไม่งั้นมือถือกับเว็บจะเห็นรายการไม่ตรงกัน
  */
 
-type BreakRuleType = 'HIDDEN' | 'SHOW_BUTTON';
+export type BreakRuleType = 'HIDDEN' | 'SHOW_BUTTON';
 
 interface BreakRule {
   /** นาทีที่เริ่มนับจากเที่ยงคืน */
@@ -16,13 +16,15 @@ interface BreakRule {
 }
 
 const BREAK_RULES: BreakRule[] = [
-  { start: 9 * 60 + 58, end: 10 * 60 + 12, minDuration: 9, type: 'HIDDEN' },
-  { start: 11 * 60 + 58, end: 13 * 60 + 2, minDuration: 55, type: 'HIDDEN' },
-  { start: 14 * 60 + 58, end: 15 * 60 + 12, minDuration: 8, type: 'HIDDEN' },
-  { start: 16 * 60 + 58, end: 17 * 60 + 32, minDuration: 25, type: 'HIDDEN' },
-  { start: 21 * 60 + 58, end: 22 * 60 + 12, minDuration: 9, type: 'HIDDEN' },
-  { start: 22 * 60 + 58, end: 24 * 60 + 2, minDuration: 50, type: 'HIDDEN' },
-  { start: 0, end: 2, minDuration: 50, type: 'HIDDEN' },
+  // กลุ่ม HIDDEN: หยุดตั้งแต่ minDuration ขึ้นไปในช่วงนี้ = ช่วงพักตามแผน ซ่อนทิ้ง
+  { start: 9 * 60 + 58, end: 10 * 60 + 12, minDuration: 9, type: 'HIDDEN' }, // เบรกเช้า
+  { start: 11 * 60 + 58, end: 13 * 60 + 2, minDuration: 55, type: 'HIDDEN' }, // พักเที่ยง
+  { start: 14 * 60 + 58, end: 15 * 60 + 12, minDuration: 8, type: 'HIDDEN' }, // เบรกบ่าย
+  { start: 16 * 60 + 58, end: 17 * 60 + 32, minDuration: 25, type: 'HIDDEN' }, // ต่อกะ
+  { start: 21 * 60 + 58, end: 22 * 60 + 12, minDuration: 9, type: 'HIDDEN' }, // เบรกดึก
+  // สองแถวนี้คือช่วงเดียวกันที่ถูกผ่าครึ่ง เพราะเทียบเป็นนาทีนับจากเที่ยงคืน ข้ามวันไม่ได้
+  { start: 22 * 60 + 58, end: 24 * 60 + 2, minDuration: 50, type: 'HIDDEN' }, // พักกะดึก ก่อนเที่ยงคืน
+  { start: 0, end: 2, minDuration: 50, type: 'HIDDEN' }, // พักกะดึก หลังเที่ยงคืน
   { start: 10 * 60 + 58, end: 12 * 60 + 2, minDuration: 50, type: 'SHOW_BUTTON' },
   { start: 11 * 60 + 28, end: 12 * 60 + 32, minDuration: 50, type: 'SHOW_BUTTON' },
   { start: 19 * 60 + 46, end: 20 * 60 + 12, minDuration: 9, type: 'SHOW_BUTTON' },
@@ -34,6 +36,16 @@ const BREAK_RULES: BreakRule[] = [
   { start: 11 * 60 + 58, end: 12 * 60 + 32, minDuration: 25, type: 'SHOW_BUTTON' },
   { start: 8 * 60, end: 23 * 60 + 59, minDuration: 100, type: 'SHOW_BUTTON' },
 ];
+
+/**
+ * ระยะเวลาหยุดขั้นต่ำที่ถือว่าน่าสนใจพอจะให้กรอกสาเหตุ
+ *
+ * รายการที่หยุดไม่เกินค่านี้เป็นการสะดุดสั้น ๆ ที่ไม่มีสาเหตุให้กรอกจริง
+ * ถ้าปล่อยให้ขึ้นในลิสต์จะกลบรายการที่ต้องรีบดูจริง ๆ จนหาไม่เจอ
+ *
+ * เทียบแบบ "ไม่เกิน" คือ 2.00 นาทีพอดีก็ไม่แสดง ต้องมากกว่านี้เท่านั้น
+ */
+export const MIN_VISIBLE_MINS = 2;
 
 /**
  * HIDDEN = ช่วงพักตามแผน ไม่ต้องแสดงให้กรอกสาเหตุ
@@ -72,6 +84,19 @@ export function getShiftWindow(dateString: string) {
   end.setDate(end.getDate() + 1);
   end.setHours(7, 59, 59, 999);
   return { start, end };
+}
+
+/**
+ * แปลงเวลา "HH:mm" เป็นลำดับภายในกะ เพื่อใช้เรียงว่าอันไหนมาก่อนมาหลัง
+ *
+ * กะเริ่ม 08:00 และลากข้ามเที่ยงคืน ถ้าเทียบสตริงตรง ๆ เวลา 01:30 ของกะดึก
+ * จะถูกมองว่ามาก่อน 22:00 ซึ่งผิด เวลาก่อนแปดโมงจึงต้องบวกไปอีกหนึ่งวัน
+ */
+export function shiftTimeOrder(hhmm: string) {
+  const [h, m] = hhmm.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  const mins = h * 60 + m;
+  return mins < 8 * 60 ? mins + 24 * 60 : mins;
 }
 
 /** บวก/ลบวันจากสตริงวันที่ "YYYY-MM-DD" */

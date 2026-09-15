@@ -1,0 +1,49 @@
+# แบบเก็บรูปไว้บนเครื่องอื่นผ่านโฟลเดอร์แชร์ (SMB/CIFS)
+#
+# ใช้เมื่อบริการรันอยู่ที่ 192.168.2.222 แต่ต้องการให้ไฟล์รูปไปกองอยู่ที่ 192.168.2.188
+# ต่างจาก docker-compose.deploy.yml ตรงที่รูปไม่ได้อยู่ใต้ ./data บนเครื่องที่รันแล้ว
+#
+# ก่อนใช้ต้องแชร์โฟลเดอร์ที่เครื่อง 188 ให้เขียนได้ก่อน แล้วใส่ชื่อผู้ใช้กับรหัสผ่านของ
+# บัญชีบนเครื่องนั้นไว้ใน .env เป็น SHARE_USER กับ SHARE_PASSWORD
+services:
+  notify:
+    image: idletime-notify:latest
+    container_name: idletime-notify
+
+    restart: unless-stopped
+
+    ports:
+      - "8090:8090"
+
+    environment:
+      TZ: Asia/Bangkok
+      # ย้ายเฉพาะไฟล์รูปออกไปนอก /app/data ส่วน token กับ photos.json ยังอยู่เครื่องเดิม
+      # แยกกันแบบนี้เพื่อไม่ให้ต้อง mount ซ้อนกัน และถ้าเครื่อง 188 ล่ม
+      # ข้อมูลอ้างอิงว่ารูปไหนของรายการไหนก็ยังไม่หายไปด้วย
+      PHOTO_DIR: /app/photos
+
+    env_file:
+      - .env
+
+    volumes:
+      # token และ photos.json ยังอยู่บนเครื่องที่รันบริการ
+      - ./data:/app/data
+      # ไฟล์รูปจริงไปอยู่บนเครื่อง 188 ผ่านโฟลเดอร์แชร์
+      - photos:/app/photos
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  photos:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//192.168.2.188/IdleTimePhotos"
+      # uid/gid 1000 คือผู้ใช้ node ใน image ถ้าไม่ระบุ container จะเขียนไฟล์ไม่ได้
+      # vers=3.0 ใช้กับ Windows Server รุ่นใหม่ ถ้าเครื่องปลายทางเก่ากว่านั้นลองลดเป็น 2.1
+      o: "username=${SHARE_USER},password=${SHARE_PASSWORD},vers=3.0,uid=1000,gid=1000,file_mode=0644,dir_mode=0755"

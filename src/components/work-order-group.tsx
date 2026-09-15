@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
@@ -10,6 +10,10 @@ interface Props {
   modelSuffix: string;
   /** จำนวนรายการทั้งหมดใน work order นี้ */
   count: number;
+  /** เวลาเริ่มของรายการแรกในกลุ่ม */
+  startTime: string;
+  /** เวลาจบของรายการสุดท้ายในกลุ่ม */
+  endTime: string;
   /** ผลรวมนาทีที่หยุดของทุกรายการในกลุ่ม */
   totalMins: number;
   /** จำนวนรายการที่ยังไม่ได้กรอกสาเหตุ */
@@ -22,10 +26,12 @@ interface Props {
  * หัวข้อกลุ่มของ work order หนึ่งใบ แตะเพื่อกางรายการย่อยข้างใน
  * สีตามเดิมของแอป: ยังมีรายการค้างกรอก = แดง, กรอกครบแล้ว = เขียว
  */
-export default function WorkOrderGroup({
+function WorkOrderGroupBase({
   workOrder,
   modelSuffix,
   count,
+  startTime,
+  endTime,
   totalMins,
   pendingCount,
   expanded,
@@ -35,6 +41,20 @@ export default function WorkOrderGroup({
   const { t } = useLanguage();
   const styles = useMemo(() => createStyles(c), [c]);
   const allDone = pendingCount === 0;
+  const doneCount = count - pendingCount;
+  /** สัดส่วนที่กรอกสาเหตุแล้ว ใช้วาดหลอดความคืบหน้า */
+  const doneRatio = count > 0 ? doneCount / count : 0;
+
+  /**
+   * สีหลอดไล่ตามระดับความคืบหน้า ไม่ใช่แค่ครบกับไม่ครบ
+   *
+   * ทำให้ operator กวาดสายตาทีเดียวแล้วรู้ว่ากลุ่มไหนเพิ่งเริ่มและกลุ่มไหนใกล้เสร็จ
+   * โดยไม่ต้องเพ่งอ่านความยาวหลอดหรือตัวเลขทีละใบ
+   *
+   * แดง = ยังไม่ถึงครึ่ง, เหลือง = เกินครึ่งแต่ยังไม่ครบ, เขียว = ครบทุกรายการ
+   */
+  const progressColor =
+    doneRatio >= 1 ? c.statusDoneFill : doneRatio >= 0.5 ? c.warning : c.statusPendingFill;
 
   return (
     <TouchableOpacity
@@ -62,9 +82,30 @@ export default function WorkOrderGroup({
         {modelSuffix}
       </Text>
 
+      {/*
+        ช่วงเวลาของทั้งกลุ่ม คือเวลาเริ่มของรายการแรกถึงเวลาจบของรายการสุดท้าย
+        ทำให้รู้ได้ทันทีว่ากลุ่มนี้เกิดช่วงไหนของกะ โดยไม่ต้องกดเปิดดูรายการย่อย
+      */}
+      <Text style={styles.timeRange}>
+        {startTime} - {endTime}
+      </Text>
+
+      {/*
+        หลอดบอกว่ากรอกสาเหตุไปแล้วกี่รายการจากทั้งหมด
+        เห็นความคืบหน้าได้จากระยะไกลกว่าการอ่านตัวเลข ซึ่งช่วยตอนกวาดสายตาหาว่ายังเหลืองานตรงไหน
+      */}
+      <View style={styles.progressTrack}>
+        <View
+          style={[
+            styles.progressFill,
+            { width: `${Math.round(doneRatio * 100)}%`, backgroundColor: progressColor },
+          ]}
+        />
+      </View>
+
       <View style={styles.metaRow}>
         <Text style={styles.metaText}>
-          {count} {t('itemsCount')}
+          {doneCount}/{count} {t('itemsCount')}
         </Text>
         <View style={styles.metaRight}>
           <Text style={styles.totalMins}>{totalMins.toFixed(2)} min</Text>
@@ -75,6 +116,10 @@ export default function WorkOrderGroup({
     </TouchableOpacity>
   );
 }
+
+/** เหตุผลเดียวกับ RecordCard คือกันไม่ให้ทั้งลิสต์เรนเดอร์ใหม่เมื่อกดกลุ่มเดียว */
+const WorkOrderGroup = memo(WorkOrderGroupBase);
+export default WorkOrderGroup;
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
@@ -118,6 +163,20 @@ const createStyles = (c: ThemeColors) =>
     badgePending: { backgroundColor: c.statusPendingFill },
     badgeText: { fontSize: font.small, fontWeight: '700', color: c.onStatus },
     model: { fontSize: font.small, color: c.textSecondaryStrong, marginTop: spacing.xs },
+    timeRange: {
+      fontSize: font.small,
+      color: c.textSecondaryStrong,
+      marginTop: spacing.xs,
+      fontVariant: ['tabular-nums'],
+    },
+    progressTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: c.border,
+      overflow: 'hidden',
+      marginTop: spacing.md,
+    },
+    progressFill: { height: '100%', borderRadius: 3 },
     metaRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',

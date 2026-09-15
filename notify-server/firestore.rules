@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// วางกฎชุดนี้ที่ Firebase Console > Firestore Database > Rules แล้วกด Publish
+//
+// หลักคิด: มือถือเขียนได้เฉพาะเอกสารของตัวเอง และเขียนได้เฉพาะฟิลด์ที่กำหนด
+// ส่วน notify-server ใช้ Admin SDK ซึ่งข้ามกฎเหล่านี้อยู่แล้ว จึงอ่านได้ทั้งหมด
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /devices/{uid} {
+      // ห้ามอ่าน — ไม่มีเหตุให้เครื่องหนึ่งเห็น token ของเครื่องอื่น
+      // ถ้าเปิดอ่านได้ ใครก็ดึงรายการ token ทั้งโรงงานไปได้
+      allow read: if false;
+
+      // เขียนได้เฉพาะเอกสารที่ชื่อตรงกับ uid ของตัวเอง
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && isValidDevice(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // ปิดทุกอย่างที่ไม่ได้ระบุไว้ข้างบน
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// จำกัดรูปร่างข้อมูล กันไม่ให้ใครยัดข้อมูลขยะจนเปลืองโควตา
+function isValidDevice(data) {
+  return data.keys().hasOnly(['token', 'platform', 'userName', 'active', 'updatedAt'])
+    && data.token is string
+    && data.token.size() > 20
+    && data.token.size() < 500
+    && data.platform in ['android', 'ios']
+    && data.active is bool;
+}

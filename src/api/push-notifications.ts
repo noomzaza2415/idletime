@@ -1,21 +1,25 @@
 /**
  * การแจ้งเตือนของแอป Idle Time Tracker
  *
- * มีสองเส้นทางที่เสริมกัน:
- *  1. Push จาก backend — ทำงานแม้ปิดแอปไปแล้ว ต้องส่ง Expo push token ไปให้ backend เก็บไว้
- *  2. Local notification — แอปตั้งเวลาเอง ใช้ยิงรอบที่สองหลังจากรอบแรก 30 วินาที
+ * ใช้ push จาก backend ทางเดียว เพราะทำงานแม้ปิดแอปไปแล้ว
+ * แอปจึงมีหน้าที่แค่ส่ง push token ไปให้ backend เก็บไว้ และขอสิทธิ์แจ้งเตือน
  *
- * เหตุที่รอบสองตั้งจากเครื่องแทนที่จะให้ backend ยิงซ้ำ เพราะไม่ต้องแก้ฝั่ง backend
- * และเวลาห่างแม่นกว่า ไม่ขึ้นกับคิวของ push service
+ * หนึ่งเหตุการณ์ยิงแจ้งเตือนรอบเดียว ไม่มีการเตือนซ้ำทั้งฝั่งแอปและฝั่ง server
  */
 
-import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-/** ระยะห่างก่อนแจ้งเตือนซ้ำรอบที่สอง */
-export const REPEAT_DELAY_SECONDS = 30;
+/**
+ * ปลายทางที่จะเปิดเมื่อผู้ใช้กดแจ้งเตือน
+ * ถ้ามี recordId จะพาไปหน้ากรอกสาเหตุของรายการนั้นเลย ไม่ต้องไล่หาเองในลิสต์
+ */
+export interface NotificationTarget {
+  recordId?: string;
+  date?: string;
+  [key: string]: unknown;
+}
 
 /** ช่องแจ้งเตือนของ Android — ต้องสร้างก่อน ไม่งั้นจะไม่มีเสียงและเด้งไม่ขึ้น */
 const CHANNEL_ID = 'idle-time-alerts';
@@ -39,7 +43,6 @@ async function ensureAndroidChannel(): Promise<void> {
     name: 'Idle Time alerts',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
-    sound: 'default',
   });
 }
 
@@ -61,7 +64,7 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 /**
- * คืน Expo push token ให้เอาไปฝากไว้ที่ backend สำหรับยิง push ตอนปิดแอป
+ * คืน FCM token ให้เอาไปฝากไว้ที่ notify-server สำหรับยิง push ตอนปิดแอป
  * คืน null ถ้าไม่ได้รับสิทธิ์ หรือรันบน emulator ที่ขอ token ไม่ได้
  */
 export async function registerForPushNotifications(): Promise<string | null> {
@@ -71,48 +74,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
   // เฉพาะ push token เท่านั้นที่ต้องเครื่องจริง — local notification ใช้ได้ทุกที่
   if (!Device.isDevice) return null;
 
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  if (!projectId) return null;
-
-  const token = await Notifications.getExpoPushTokenAsync({ projectId });
-  return token.data;
-}
-
-/**
- * แจ้งเตือนทันที แล้วตั้งอีกรอบห่างไป 30 วินาที ตามที่กำหนดไว้
- * ใช้ตอนแอปตรวจเจอข้อมูลใหม่เอง และตอนได้รับ push จาก backend
- */
-export async function notifyNewRecordsTwice(title: string, body: string): Promise<void> {
-  await ensureAndroidChannel();
-
-  await Notifications.scheduleNotificationAsync({
-    content: { title, body, sound: 'default' },
-    trigger: null,
-  });
-
-  await Notifications.scheduleNotificationAsync({
-    content: { title, body, sound: 'default' },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-      seconds: REPEAT_DELAY_SECONDS,
-      channelId: CHANNEL_ID,
-    },
-  });
-}
-
-/**
- * ตั้งเฉพาะรอบที่สอง ใช้ตอนที่รอบแรกมาจาก push ของ backend อยู่แล้ว
- * จะได้ไม่ยิงซ้ำซ้อนกับที่ผู้ใช้เพิ่งเห็นไป
- */
-export async function scheduleRepeatAfterPush(title: string, body: string): Promise<void> {
-  await ensureAndroidChannel();
-  await Notifications.scheduleNotificationAsync({
-    content: { title, body, sound: 'default' },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-      seconds: REPEAT_DELAY_SECONDS,
-      channelId: CHANNEL_ID,
-    },
-  });
+  // ใช้ token ของ FCM ตรง ๆ เพราะ notify-server ยิงผ่าน Firebase ไม่ได้ผ่าน Expo push service
+  const token = await Notifications.getDevicePushTokenAsync();
+  return String(token.data);
 }

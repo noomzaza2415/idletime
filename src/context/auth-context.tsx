@@ -25,14 +25,16 @@ const STORAGE_KEYS = ['authToken', 'userName', 'authExpiresAt'];
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * วันหมดอายุของเซสชัน = อันที่ถึงก่อนระหว่างเพดาน 30 วัน กับวันหมดอายุที่ auth service ส่งมา
- * ถ้า token หมดอายุก่อน 30 วันอยู่แล้ว การถือ session ต่อก็ไม่มีประโยชน์
+ * วันหมดอายุของเซสชัน = 30 วันนับจากที่ล็อกอิน
+ *
+ * จงใจไม่สนใจ expiration ที่ auth service ส่งมา เพราะ JWT ของระบบนั้นหมดอายุใน
+ * ไม่กี่ชั่วโมง ถ้าเอามาใช้ผู้ใช้จะถูกเด้งออกวันละหลายครั้ง
+ *
+ * ปลอดภัยเพราะ API ของ Idle Time ไม่ได้ตรวจ token อยู่แล้ว (ดู config.ts)
+ * token ที่หมดอายุจึงไม่กระทบการใช้งาน มีไว้เพื่อระบุตัวผู้ใช้เท่านั้น
  */
-function resolveExpiry(serverExpiration: string | null): number {
-  const cap = Date.now() + SESSION_MAX_AGE_MS;
-  if (!serverExpiration) return cap;
-  const fromServer = Date.parse(serverExpiration);
-  return Number.isNaN(fromServer) ? cap : Math.min(cap, fromServer);
+function resolveExpiry(): number {
+  return Date.now() + SESSION_MAX_AGE_MS;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -58,11 +60,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { token, name, expiration } = await loginApi(email, password);
+    const { token, name } = await loginApi(email, password);
     await AsyncStorage.multiSet([
       ['authToken', token],
       ['userName', name],
-      ['authExpiresAt', String(resolveExpiry(expiration))],
+      ['authExpiresAt', String(resolveExpiry())],
     ]);
     setIsLoggedIn(true);
     setUserName(name);

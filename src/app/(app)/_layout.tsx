@@ -1,8 +1,18 @@
 import { Stack } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getNotificationsEnabled, setNotificationsEnabled } from '@/api/notification-preference';
 import LanguageButton from '@/components/language-button';
 import ThemeButton from '@/components/theme-button';
 import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
@@ -18,9 +28,34 @@ export default function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
+  // สวิตช์ปิดแจ้งเตือน สำหรับตอนออกไปนอกบริษัทแล้วไม่อยากให้มีเสียงเข้า
+  const [notifyOn, setNotifyOn] = useState(true);
+  const [savingNotify, setSavingNotify] = useState(false);
+
+  useEffect(() => {
+    void getNotificationsEnabled().then(setNotifyOn);
+  }, []);
+
   async function handleLogout() {
     setMenuOpen(false);
     await logout();
+  }
+
+  /**
+   * ขยับสวิตช์ให้เห็นผลทันที แล้วค่อยรอผลการบันทึก
+   *
+   * ถ้าบันทึกไม่สำเร็จจะดีดกลับไปค่าเดิมพร้อมบอกเหตุผล ไม่ปล่อยให้สวิตช์
+   * แสดงว่าปิดอยู่ทั้งที่ server ยังส่งแจ้งเตือนมาตามปกติ
+   */
+  async function handleToggleNotify(next: boolean) {
+    setNotifyOn(next);
+    setSavingNotify(true);
+    const saved = await setNotificationsEnabled(next, userName);
+    setSavingNotify(false);
+    if (!saved) {
+      setNotifyOn(!next);
+      Alert.alert(t('notifications'), t('notificationsFailed'));
+    }
   }
 
   return (
@@ -75,6 +110,20 @@ export default function AppLayout() {
               </Text>
             </View>
 
+            <View style={styles.settingBox}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>{t('notifications')}</Text>
+                <Switch
+                  value={notifyOn}
+                  onValueChange={handleToggleNotify}
+                  disabled={savingNotify}
+                />
+              </View>
+              <Text style={styles.settingHint}>
+                {t(notifyOn ? 'notificationsOn' : 'notificationsOff')}
+              </Text>
+            </View>
+
             <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
               <Text style={styles.logoutText}>{t('logout')}</Text>
             </TouchableOpacity>
@@ -125,6 +174,18 @@ const createStyles = (c: ThemeColors) =>
       color: c.primary,
       marginTop: spacing.xs,
     },
+    settingBox: {
+      backgroundColor: c.chipBg,
+      borderRadius: radius.md,
+      padding: spacing.lg,
+    },
+    settingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    settingLabel: { fontSize: font.body, fontWeight: '700', color: c.textPrimary },
+    settingHint: { fontSize: font.small, color: c.textSecondary, marginTop: spacing.xs },
     logoutButton: {
       marginTop: 'auto',
       minHeight: controlHeight,

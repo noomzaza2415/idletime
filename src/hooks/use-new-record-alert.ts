@@ -1,11 +1,10 @@
+import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import {
-  notifyNewRecordsTwice,
-  registerForPushNotifications,
-  scheduleRepeatAfterPush,
-} from '@/api/push-notifications';
+import { registerForPushNotifications, type NotificationTarget } from '@/api/push-notifications';
+import { saveDeviceToFirestore } from '@/api/firestore-device';
+import { getNotificationsEnabled } from '@/api/notification-preference';
 import { registerDeviceToken } from '@/api/register-device';
 import type { IdleTimeRecord } from '@/types';
 
@@ -23,16 +22,16 @@ interface Options {
 }
 
 /**
- * เฝ้าดูรายการใหม่แล้วแจ้งเตือนสองรอบห่างกัน 30 วินาที
+ * เฝ้าดูรายการใหม่เพื่อขึ้นแถบแจ้งในแอป และพาไปหน้ากรอกเมื่อกดแจ้งเตือน
  *
- * ครอบคลุมสองกรณี:
- *  - แอปเปิดค้างอยู่ — hook นี้ poll เองแล้วเทียบ id ที่เคยเห็น
- *  - แอปถูกปิด — backend ยิง push มา พอผู้ใช้เห็นรอบแรกแล้ว hook ตั้งรอบสองต่อให้
+ * ตัวแจ้งเตือนจริงเป็นหน้าที่ของ notify-server ทั้งหมด และยิงรอบเดียวต่อหนึ่งเหตุการณ์
+ * เพราะ listener ฝั่งแอปทำงานเฉพาะตอนแอปยังรันอยู่ ผู้ใช้ที่ปิดแอปจะไม่ได้รับ
  *
- * รอบแรกหลังเปิดแอปจะไม่แจ้งเตือน เพราะทุกรายการยังนับเป็นของใหม่หมด
- * ต้องเก็บเป็นฐานเปรียบเทียบไว้ก่อน ไม่งั้นจะเด้งรัวทุกครั้งที่เปิด
+ * hook นี้จึงเหลือหน้าที่แค่นับรายการใหม่ไว้ขึ้นแถบสีน้ำเงินตอนเปิดแอปค้างอยู่
+ * ถ้าให้ยิงแจ้งเตือนเองด้วยจะซ้ำกับ push ที่ server ส่งมา
  */
 export function useNewRecordAlert({ fetchLatest, userName, enabled, buildMessage }: Options) {
+  const router = useRouter();
   const seenIds = useRef<Set<string> | null>(null);
   const [newCount, setNewCount] = useState(0);
 
@@ -49,21 +48,47 @@ export function useNewRecordAlert({ fetchLatest, userName, enabled, buildMessage
     let cancelled = false;
     (async () => {
       const token = await registerForPushNotifications();
-      if (!cancelled && token) await registerDeviceToken(token, userName);
+      if (cancelled || !token) return;
+
+      // เคารพสวิตช์ปิดแจ้งเตือนที่ผู้ใช้เคยกดไว้ ไม่งั้นการเขียนทับรอบนี้
+      // จะตั้ง active กลับเป็น true แล้วแจ้งเตือนกลับมาเองทุกครั้งที่เปิดแอป
+      const enabled = await getNotificationsEnabled();
+
+      // เขียนลง Firestore ก่อน เพราะทำได้จากเน็ตอะไรก็ได้ ไม่ต้องอยู่วง LAN
+      const savedToCloud = await saveDeviceToFirestore(token, userName, enabled);
+
+      // ยิงไปที่ notify-server ด้วยเมื่อ Firestore ไม่สำเร็จ เผื่อยังไม่ได้เปิดใช้ Firestore
+      // ข้ามเมื่อผู้ใช้ปิดแจ้งเตือนไว้ เพราะ endpoint นั้นตั้ง active เป็น true เสมอ
+      if (!savedToCloud && enabled) await registerDeviceToken(token, userName);
     })();
     return () => {
       cancelled = true;
     };
   }, [userName]);
 
-  // push ที่ backend ยิงมาถือเป็นรอบแรก แล้วตั้งรอบสองต่อจากตรงนั้น
+  /** กดแจ้งเตือนแล้วเปิดหน้ากรอกสาเหตุของรายการนั้นเลย ถ้าแจ้งเตือนระบุ recordId มาด้วย */
+  const openFromNotification = useCallback(
+    (response: Notifications.NotificationResponse) => {
+      const target = response.notification.request.content.data as NotificationTarget | undefined;
+      if (!target?.recordId) return;
+      router.push({
+        pathname: '/record/[id]',
+        params: { id: String(target.recordId), date: target.date ? String(target.date) : undefined },
+      });
+    },
+    [router]
+  );
+
   useEffect(() => {
-    const sub = Notifications.addNotificationReceivedListener((notification) => {
-      const { title, body } = notification.request.content;
-      void scheduleRepeatAfterPush(title ?? '', body ?? '');
+    // กรณีแอปถูกปิดสนิทแล้วเปิดขึ้นมาจากการกดแจ้งเตือน ต้องอ่านย้อนหลังเอง
+    // เพราะ listener ด้านล่างผูกไม่ทันตอนที่ระบบส่ง response เข้ามา
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) openFromNotification(response);
     });
+
+    const sub = Notifications.addNotificationResponseReceivedListener(openFromNotification);
     return () => sub.remove();
-  }, []);
+  }, [openFromNotification]);
 
   // ถามข้อมูลใหม่เป็นระยะขณะเปิดหน้าค้างไว้
   useEffect(() => {
@@ -83,9 +108,6 @@ export function useNewRecordAlert({ fetchLatest, userName, enabled, buildMessage
 
         for (const r of fresh) baseline.add(r.id);
         setNewCount((prev) => prev + fresh.length);
-
-        const { title, body } = buildMessage(fresh.length);
-        await notifyNewRecordsTwice(title, body);
       } catch {
         // เน็ตสะดุดชั่วคราวไม่ต้องทำอะไร รอบหน้าค่อยลองใหม่
       }

@@ -1,0 +1,38 @@
+# สำหรับเครื่อง 192.168.2.222 ที่โหลด image จากไฟล์ .tar
+# ไม่มี build context เพราะไม่ต้องมี source code บนเครื่องปลายทาง
+# ใช้คู่กับ idletime-notify.tar (docker load -i ...)
+#
+# ต่างจาก docker-compose.yml ตรงที่ไฟล์นั้นมี build: . ไว้ใช้ตอนพัฒนาในเครื่องตัวเอง
+services:
+  notify:
+    image: idletime-notify:latest
+    container_name: idletime-notify
+
+    # เด้งกลับเองเมื่อ container ล้ม และขึ้นเองหลัง server รีบูต
+    # ใช้ unless-stopped ไม่ใช่ always เพื่อให้ที่สั่งหยุดเองไว้ยังหยุดอยู่หลังรีบูต
+    restart: unless-stopped
+
+    ports:
+      - "8090:8090"
+
+    # เวลาทุกอย่างในบริการนี้ยึดเวลาไทย เพราะกติกากะและช่วงพักอิงเวลาโรงงาน
+    # ชื่อไฟล์รูปและโฟลเดอร์รายเดือนก็ตั้งจากเวลานี้ ถ้าเพี้ยนรูปจะไปอยู่ผิดเดือน
+    environment:
+      TZ: Asia/Bangkok
+
+    env_file:
+      - .env
+
+    volumes:
+      # token และรูปแนบต้องอยู่นอก container ไม่งั้นหายทุกครั้งที่ลบหรือ build ใหม่
+      # รูปอยู่ใต้ data/photos/<ปี-เดือน>/ จึงใช้ volume เดียวกันนี้ได้เลย
+      - ./data:/app/data
+      # กุญแจ Firebase ผูกเข้าไปแบบอ่านอย่างเดียว ไม่ฝังลงใน image
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+
+    # จำกัด log ไม่ให้กินดิสก์จนเต็มเมื่อรันยาว ๆ เป็นเดือน
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

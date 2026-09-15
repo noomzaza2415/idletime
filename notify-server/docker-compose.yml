@@ -1,0 +1,35 @@
+services:
+  notify:
+    build: .
+    image: idletime-notify
+    container_name: idletime-notify
+
+    # เด้งกลับเองเมื่อ container ล้ม และขึ้นเองหลัง server รีบูต
+    # ใช้ unless-stopped ไม่ใช่ always เพื่อให้ที่สั่งหยุดเองไว้ยังหยุดอยู่หลังรีบูต
+    restart: unless-stopped
+
+    ports:
+      - "8090:8090"
+
+    # ค่าจาก .env ถูกส่งเข้าไปเป็น environment variable ของ process โดยตรง
+    # ตัวไฟล์ .env ไม่ได้ถูกก๊อปเข้า image จึงไม่มีความลับติดไปกับ image
+    # ตั้งที่นี่ด้วยเพื่อให้เห็นชัดและแก้ได้โดยไม่ต้อง build ใหม่
+    # เวลาทุกอย่างในบริการนี้ยึดเวลาไทย เพราะกติกากะและช่วงพักอิงเวลาโรงงาน
+    environment:
+      TZ: Asia/Bangkok
+
+    env_file:
+      - .env
+
+    volumes:
+      # ข้อมูล token ต้องอยู่นอก container ไม่งั้นหายทุกครั้งที่ลบหรือ build ใหม่
+      - ./data:/app/data
+      # กุญแจ Firebase ผูกเข้าไปแบบอ่านอย่างเดียว ไม่ฝังลงใน image
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+
+    # จำกัด log ไม่ให้กินดิสก์จนเต็มเมื่อรันยาว ๆ เป็นเดือน
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

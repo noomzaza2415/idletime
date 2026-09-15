@@ -1,12 +1,10 @@
 import { Picker } from '@react-native-picker/picker';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -14,15 +12,32 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { fetchRecordById, updateRecord } from '@/api/idle-time-service';
 import { getShiftDateString } from '@/api/idle-rules';
-import { getRecordPhotos, setRecordPhotos } from '@/api/photo-store';
+import {
+  deleteRecordPhoto,
+  getRecordPhotos,
+  uploadRecordPhotos,
+  type PickedPhoto,
+  type RecordPhoto,
+} from '@/api/photo-store';
+import PhotoUploadCard from '@/components/photo-upload-card';
 import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useColors } from '@/context/theme-context';
-import { DEPT_OPTIONS, TYPE_OPTIONS, type IdleTimeRecord } from '@/types';
+import { BREAK_TIME_VALUE, DEPT_OPTIONS, TYPE_OPTIONS, type IdleTimeRecord } from '@/types';
+
+/** เพดานรูปต่อรายการ ต้องตรงกับ MAX_PHOTOS_PER_RECORD ฝั่ง notify-server */
+const MAX_PHOTOS = 20;
+
+/** ส่งขนาดภาพไปด้วย ตัวอัปโหลดจะได้รู้ว่าต้องย่อด้านกว้างหรือด้านสูง */
+function toPicked(asset: ImagePicker.ImagePickerAsset): PickedPhoto {
+  return { uri: asset.uri, width: asset.width, height: asset.height };
+}
 
 export default function RecordDetailScreen() {
   // date ส่งมาจากหน้ารายการ เพื่อให้เปิดรายการของวันย้อนหลังได้ถูกกะ
@@ -32,20 +47,34 @@ export default function RecordDetailScreen() {
   const insets = useSafeAreaInsets();
   const c = useColors();
   const { t } = useLanguage();
+  const { userName } = useAuth();
   const styles = useMemo(() => createStyles(c), [c]);
   const [record, setRecord] = useState<IdleTimeRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<RecordPhoto[]>([]);
+  /** สัดส่วนการอัปโหลด 0-1 เป็น null เมื่อไม่ได้กำลังอัปโหลด */
+  const [progress, setProgress] = useState<number | null>(null);
+  /**
+   * ผู้ใช้กด "No Break" แล้ว จึงเปลี่ยนไปแสดงช่องพิมพ์แทนปุ่มสองปุ่ม
+   *
+   * เก็บเป็น state ในหน้าจอเท่านั้น ไม่ได้บันทึกลง backend เหมือนฝั่งเว็บ
+   * เพราะเป็นแค่การบอกว่า "ตัดสินใจแล้วว่าไม่ใช่ช่วงพัก" ไม่ใช่ข้อมูลของรายการ
+   */
+  const [manualEntry, setManualEntry] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        // รูปเก็บแยกในเครื่อง เพราะ API ยังไม่มี field สำหรับรูป
+        // รูปเก็บที่ notify-server แยกจาก API หลัก เพราะ API หลักยังไม่มี field สำหรับรูป
+        // รูปโหลดไม่ขึ้นไม่ควรทำให้ทั้งหน้าล้ม จึงจับ error แยกแล้วปล่อยให้เป็นรายการว่าง
         const [found, savedPhotos] = await Promise.all([
           fetchRecordById(id, shiftDate),
-          getRecordPhotos(id),
+          getRecordPhotos(id).catch((err) => {
+            console.warn('โหลดรูปแนบไม่สำเร็จ:', err.message);
+            return [];
+          }),
         ]);
         setRecord(found);
         setPhotos(savedPhotos);
@@ -57,11 +86,35 @@ export default function RecordDetailScreen() {
     })();
   }, [id, shiftDate]);
 
-  async function addPhotos(uris: string[]) {
-    // กันรูปซ้ำเวลาเลือกไฟล์เดิมจากคลังภาพอีกรอบ
-    const next = [...photos, ...uris.filter((u) => !photos.includes(u))];
-    setPhotos(next);
-    await setRecordPhotos(id, next);
+  async function addPhotos(picked: PickedPhoto[]) {
+    setProgress(0);
+    try {
+      const saved = await uploadRecordPhotos(id, picked, userName, setProgress);
+      setPhotos((prev) => [...prev, ...saved]);
+    } catch (e) {
+      Alert.alert(t('uploadPhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  function confirmRemoveAll() {
+    Alert.alert(t('clearAllPhotosTitle'), undefined, [
+      {
+        text: t('delete'),
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            // ลบทีละใบเพราะ server ไม่มีเส้นลบทั้งชุด ทำแบบนี้ยังปลอดภัยกว่าเพิ่มเส้นลบเป็นกลุ่ม
+            for (const photo of photos) await deleteRecordPhoto(id, photo.fileName);
+            setPhotos([]);
+          } catch (e) {
+            Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
+          }
+        },
+      },
+      { text: t('cancel'), style: 'cancel' },
+    ]);
   }
 
   async function takePhoto() {
@@ -74,7 +127,7 @@ export default function RecordDetailScreen() {
       mediaTypes: ['images'],
       quality: 0.6, // ลดขนาดไฟล์ไว้ก่อน เผื่อวันหลังต้องอัปโหลดขึ้น backend
     });
-    if (!result.canceled) await addPhotos(result.assets.map((a) => a.uri));
+    if (!result.canceled) await addPhotos(result.assets.map(toPicked));
   }
 
   async function pickFromLibrary() {
@@ -88,7 +141,7 @@ export default function RecordDetailScreen() {
       allowsMultipleSelection: true, // เลือกทีเดียวได้หลายรูป
       quality: 0.6,
     });
-    if (!result.canceled) await addPhotos(result.assets.map((a) => a.uri));
+    if (!result.canceled) await addPhotos(result.assets.map(toPicked));
   }
 
   function choosePhotoSource() {
@@ -99,15 +152,18 @@ export default function RecordDetailScreen() {
     ]);
   }
 
-  function confirmRemovePhoto(uri: string) {
+  function confirmRemovePhoto(photo: RecordPhoto) {
     Alert.alert(t('deletePhotoTitle'), undefined, [
       {
         text: t('delete'),
         style: 'destructive',
         onPress: async () => {
-          const next = photos.filter((p) => p !== uri);
-          setPhotos(next);
-          await setRecordPhotos(id, next);
+          try {
+            await deleteRecordPhoto(id, photo.fileName);
+            setPhotos((prev) => prev.filter((p) => p.fileName !== photo.fileName));
+          } catch (e) {
+            Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
+          }
         },
       },
       { text: t('cancel'), style: 'cancel' },
@@ -122,7 +178,7 @@ export default function RecordDetailScreen() {
     if (!record) return;
     setSaving(true);
     try {
-      await updateRecord(record.id, record);
+      await updateRecord(record.id, record, shiftDate);
       Alert.alert(t('saveSuccess'), undefined, [{ text: t('ok'), onPress: () => router.back() }]);
     } catch (e) {
       Alert.alert(t('saveFailed'), e instanceof Error ? e.message : t('tryAgain'));
@@ -138,9 +194,25 @@ export default function RecordDetailScreen() {
     return <Text style={styles.notFound}>{t('notFound')}</Text>;
   }
 
+  /**
+   * ขึ้นปุ่มให้เลือกเมื่อกติกาบอกว่าคาบเกี่ยวเวลาพัก และยังไม่มีใครกรอกสาเหตุไว้
+   *
+   * ถ้ามีค่าอยู่แล้วต้องแสดงช่องพิมพ์ ไม่งั้นคนที่เปิดมาดูรายการเก่า
+   * จะไม่เห็นสิ่งที่ตัวเองเคยกรอกไป
+   */
+  const showBreakChoice =
+    record.breakRuleType === 'SHOW_BUTTON' && !record.idleTimeIssue && !manualEntry;
+
   return (
-    <ScrollView
+    // KeyboardAwareScrollView เลื่อนช่องที่กำลังพิมพ์ให้พ้นแป้นพิมพ์ให้เอง
+    // จำเป็นกับหน้านี้เพราะช่องหมายเหตุกับปุ่มบันทึกอยู่ล่างสุด แป้นพิมพ์บังพอดี
+    <KeyboardAwareScrollView
       style={styles.container}
+      // เว้นที่เหนือแป้นพิมพ์ ไม่ให้ช่องที่พิมพ์อยู่ไปแปะติดขอบแป้นพิมพ์พอดีจนอึดอัด
+      bottomOffset={spacing.xl}
+      // กดปุ่มบันทึกได้ในทีเดียวขณะแป้นพิมพ์เปิดอยู่
+      // ค่าเริ่มต้นของ ScrollView จะกินการกดครั้งแรกไปปิดแป้นพิมพ์ ต้องกดสองครั้ง
+      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{
         padding: spacing.lg,
         // edge-to-edge บน Android SDK 57: กันปุ่มบันทึกโดนแถบ gesture ทับ
@@ -173,38 +245,77 @@ export default function RecordDetailScreen() {
         </View>
       </View>
 
-      <Text style={styles.fieldLabel}>
-        {t('sitePhotos')}
-        {photos.length > 0 ? ` (${photos.length})` : ''}
-      </Text>
-      <View style={styles.photoGrid}>
-        {photos.map((uri) => (
-          <View key={uri} style={styles.thumbWrap}>
-            <Image source={{ uri }} style={styles.thumb} contentFit="cover" />
-            <TouchableOpacity
-              style={styles.thumbRemove}
-              onPress={() => confirmRemovePhoto(uri)}
-              hitSlop={spacing.sm}>
-              <Text style={styles.thumbRemoveText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
-
-        <TouchableOpacity style={styles.addPhoto} onPress={choosePhotoSource} activeOpacity={0.7}>
-          <Text style={styles.photoIcon}>📷</Text>
-          <Text style={styles.photoHint}>{photos.length > 0 ? t('addPhoto') : t('takeOrPickPhoto')}</Text>
-        </TouchableOpacity>
-      </View>
+      <PhotoUploadCard
+        photos={photos}
+        progress={progress}
+        max={MAX_PHOTOS}
+        onAdd={choosePhotoSource}
+        onRemove={confirmRemovePhoto}
+        onClearAll={confirmRemoveAll}
+        labels={{
+          title: t('uploadCardTitle'),
+          subtitle: t('uploadCardSubtitle'),
+          dropzone: t('uploadDropzone'),
+          formats: t('uploadFormats'),
+          maxSize: t('uploadMaxSize'),
+          used: t('uploadUsed'),
+          uploading: t('uploadingPhoto'),
+          complete: t('uploadComplete'),
+          uploadMore: t('uploadMore'),
+          clearAll: t('uploadClearAll'),
+        }}
+      />
 
       <Text style={styles.fieldLabel}>{t('idleIssueLabel')}</Text>
-      <TextInput
-        style={styles.input}
-        value={record.idleTimeIssue}
-        onChangeText={(v) => set('idleTimeIssue', v)}
-        placeholder={t('idleIssuePlaceholder')}
-        placeholderTextColor={c.textSecondary}
-        multiline
-      />
+      {showBreakChoice ? (
+        /*
+          รายการที่คาบเกี่ยวเวลาพักแบบที่ระบบตัดสินแทนไม่ได้ ให้พนักงานเลือกเอง
+          เหมือนฝั่งเว็บ กด Break Time แล้วเติมค่าให้ทันที ไม่ต้องพิมพ์
+        */
+        <View style={styles.breakChoice}>
+          <Text style={styles.breakChoiceHint}>{t('breakChoiceQuestion')}</Text>
+          <View style={styles.breakChoiceRow}>
+            <TouchableOpacity
+              style={[styles.breakButton, styles.breakButtonPrimary]}
+              onPress={() => {
+                set('idleTimeIssue', BREAK_TIME_VALUE);
+                set('action', BREAK_TIME_VALUE);
+              }}>
+              <Text style={styles.breakButtonPrimaryText}>{t('breakTime')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.breakButton}
+              onPress={() => setManualEntry(true)}>
+              <Text style={styles.breakButtonText}>{t('noBreak')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : (
+        <>
+          <TextInput
+            style={styles.input}
+            value={record.idleTimeIssue}
+            onChangeText={(v) => set('idleTimeIssue', v)}
+            placeholder={t('idleIssuePlaceholder')}
+            placeholderTextColor={c.textSecondary}
+            multiline
+          />
+
+          {/* เปลี่ยนใจได้ เฉพาะรายการที่เข้าเงื่อนไขให้เลือกเท่านั้น */}
+          {record.breakRuleType === 'SHOW_BUTTON' && (
+            <TouchableOpacity
+              style={styles.resetChoice}
+              onPress={() => {
+                set('idleTimeIssue', '');
+                set('action', '');
+                setManualEntry(false);
+              }}>
+              <Text style={styles.resetChoiceText}>↺ {t('resetBreakChoice')}</Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
 
       <Text style={styles.fieldLabel}>{t('actionLabel')}</Text>
       <TextInput
@@ -289,7 +400,7 @@ export default function RecordDetailScreen() {
           <Text style={styles.saveButtonText}>{t('save')}</Text>
         )}
       </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScrollView>
   );
 }
 
@@ -334,49 +445,6 @@ const createStyles = (c: ThemeColors) =>
     borderRadius: radius.sm,
     backgroundColor: c.surface,
   },
-  photoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  thumbWrap: {
-    width: 104,
-    height: 104,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-  },
-  thumb: { width: '100%', height: '100%' },
-  thumbRemove: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  thumbRemoveText: { color: '#FFFFFF', fontSize: font.small, lineHeight: font.small + 4 },
-  addPhoto: {
-    // เต็มความกว้างเพื่อให้แตะง่ายและไม่ลอยชิดซ้ายตอนยังไม่มีรูป
-    width: '100%',
-    height: 96,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: c.border,
-    backgroundColor: c.surface,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  photoIcon: { fontSize: 26 },
-  photoHint: { fontSize: font.small, color: c.textSecondary },
   moreToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -391,6 +459,33 @@ const createStyles = (c: ThemeColors) =>
   },
   moreToggleText: { fontSize: font.body, fontWeight: '600', color: c.primary },
   moreToggleIcon: { fontSize: font.small, color: c.primary },
+  breakChoice: {
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: radius.sm,
+    backgroundColor: c.surface,
+    padding: spacing.md,
+  },
+  breakChoiceHint: {
+    fontSize: font.small,
+    color: c.textSecondary,
+    marginBottom: spacing.md,
+  },
+  breakChoiceRow: { flexDirection: 'row', gap: spacing.sm },
+  breakButton: {
+    flex: 1,
+    minHeight: controlHeight,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: c.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  breakButtonPrimary: { backgroundColor: c.primary, borderColor: c.primary },
+  breakButtonPrimaryText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
+  breakButtonText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
+  resetChoice: { alignSelf: 'flex-start', paddingVertical: spacing.sm },
+  resetChoiceText: { color: c.primary, fontSize: font.small, fontWeight: '600' },
   input: {
     borderWidth: 1,
     borderColor: c.border,

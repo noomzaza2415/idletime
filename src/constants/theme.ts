@@ -26,8 +26,14 @@ const light = {
   /** ข้อความรองบนพื้นการ์ดที่มีสี — เข้มกว่า textSecondary เพื่อให้ผ่านเกณฑ์ contrast 4.5:1 */
   textSecondaryStrong: '#4B5563',
   /** พื้น badge ใช้สีสถานะทึบ เพราะพื้น badge เดิมกลืนกับพื้นการ์ด (1.02:1) */
+  /** เส้นใต้ช่องค้นหาตอนโฟกัส — สีจากดีไซน์ต้นฉบับ ใช้ได้ดีบนพื้นขาว (7.81:1) */
+  focusAccent: '#2F2EE9',
   statusPendingFill: '#DC2626',
   statusDoneFill: '#15803D',
+  /** ช่วงพัก — เหลืองอำพัน เข้มพอให้อ่านตัวหนังสือขาวบนพื้นนี้ได้ */
+  statusBreakFill: '#A16207',
+  breakAccent: '#CA8A04',
+  breakBg: '#FEFCE8',
   onStatus: '#FFFFFF',
   onPrimary: '#FFFFFF',
 };
@@ -50,8 +56,14 @@ const dark: typeof light = {
   badgePendingBg: '#3A2C10',
   cardPendingBg: '#241A1E',
   textSecondaryStrong: '#C6CBD4',
+  /** โหมดมืดใช้ primary แทน เพราะสีต้นฉบับเหลือ 2.21:1 ต่ำกว่าเกณฑ์ 3.0 ของ UI component */
+  focusAccent: '#60A5FA',
   statusPendingFill: '#F87171',
   statusDoneFill: '#4ADE80',
+  /** โหมดมืดใช้เหลืองสว่างขึ้น เพราะเหลืองเข้มจมไปกับพื้นการ์ด */
+  statusBreakFill: '#FBBF24',
+  breakAccent: '#FBBF24',
+  breakBg: '#332810',
   onStatus: '#0B0F17',
   onPrimary: '#0B0F17',
 };
@@ -110,9 +122,16 @@ export const elevation = {
  * body 18 อยู่เหนือเกณฑ์แนะนำขั้นต่ำ 16 สำหรับข้อความเนื้อหาบนมือถือ
  * และ small 15 ยังอ่านออกในระยะแขน ไม่ลงไปแตะ 12 ซึ่งเล็กเกินไปสำหรับสายตายาว
  */
+/**
+ * สเกลตัวอักษร
+ *
+ * ลดลงจากชุดเดิม (28/22/18/15) เพื่อให้เห็นรายการต่อหนึ่งหน้าจอได้มากขึ้น
+ * ไม่ลดต่ำกว่านี้เพราะหน้างานอ่านผ่านๆ ในระยะแขน บางครั้งสวมแว่นนิรภัยที่มีฝ้า
+ * ค่า body 16 เป็นขนาดมาตรฐานที่อ่านได้สบายบนมือถือ ส่วน small 13 ใช้กับข้อมูลรอง
+ */
 export const font = {
-  h1: 28,
-  h2: 22,
-  body: 18,
-  small: 15,
+  h1: 24,
+  h2: 19,
+  body: 16,
+  small: 13,
 } as const;

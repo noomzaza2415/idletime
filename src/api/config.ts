@@ -24,7 +24,13 @@ export const AUTH_ENDPOINTS = {
  * เปิดเมื่อ backend ทำ endpoint รับ Expo push token เสร็จแล้ว
  * ปิดไว้ก่อนเพื่อไม่ให้แอปยิงหา endpoint ที่ยังไม่มีทุกครั้งที่เปิด
  */
-export const PUSH_TOKEN_REGISTRATION_ENABLED = false;
+export const PUSH_TOKEN_REGISTRATION_ENABLED = true;
+
+/**
+ * บริการแจ้งเตือนแยกต่างหาก (notify-server) ไม่ใช่ backend หลัก
+ * ต้องเป็นที่อยู่สาธารณะ เพราะมือถือที่ใช้เน็ตตัวเองต้องเข้าถึงได้จากนอกโรงงาน
+ */
+export const NOTIFY_SERVER_URL = 'http://192.168.2.222:8090';
 
 export const ENDPOINTS = {
   /** GET รายการ idle time — query: dateFrom, dateTo, cdEquip */

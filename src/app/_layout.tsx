@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavThemeProvider } fro
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider } from '@/context/language-context';
@@ -11,13 +12,18 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <LanguageProvider>
-        <AuthProvider>
-          <ThemedRoot />
-        </AuthProvider>
-      </LanguageProvider>
-    </ThemeProvider>
+    // KeyboardProvider ต้องอยู่นอกสุด เพราะ KeyboardAwareScrollView ทุกหน้าอ่านค่า
+    // ความสูงแป้นพิมพ์จาก context ตัวนี้ ไม่ต้องส่ง prop เรื่อง edge-to-edge เข้าไป
+    // ตัวไลบรารีตรวจเจอ react-native-edge-to-edge ของ Expo SDK 57 แล้วตั้งให้เอง
+    <KeyboardProvider>
+      <ThemeProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <ThemedRoot />
+          </AuthProvider>
+        </LanguageProvider>
+      </ThemeProvider>
+    </KeyboardProvider>
   );
 }
 
