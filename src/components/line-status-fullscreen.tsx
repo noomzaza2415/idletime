@@ -1,7 +1,8 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { formatDateString } from '@/api/idle-rules';
 import {
@@ -55,17 +56,17 @@ function hoursMinutes(mins: number) {
  *
  * ทำงานเหมือน StatusTimelineBar ของเว็บ: เลือกช่วง 8 ชม. / 12 ชม. / ทั้งวัน ซูม 1x-10x
  * และดูรายละเอียดของแต่ละช่วงหยุด ต่างกันตรงวิธีสั่งให้เหมาะกับนิ้ว คือ
- * ซูมด้วยปุ่ม − / + แทนล้อเมาส์ ลากนิ้วเลื่อนแทนลากเมาส์ และแตะช่วงหยุดแทนการชี้ค้าง
+ * ซูมด้วยสองนิ้วหรือปุ่ม − / + แทนล้อเมาส์ ลากนิ้วเลื่อนแทนลากเมาส์ และแตะช่วงหยุดแทนการชี้ค้าง
  *
  * ด้านบนเพิ่มตัวเลขสรุปสามช่อง (เดินงาน หยุด พัก) ให้ลีดเดอร์ตอบได้ในไม่กี่วินาทีว่ากะนี้เป็นอย่างไร
  *
- * status bar ยังแสดงอยู่ เพราะ Android แบบ edge-to-edge ไม่ให้ซ่อน จึงเว้นระยะด้านบนเอง
+ * status bar กับแถบปุ่มนำทางยังแสดงอยู่ เพราะ Android แบบ edge-to-edge ไม่ให้ซ่อน
+ * จึงเว้นระยะขอบด้วย SafeAreaView ที่วัดจากหน้าต่างของ Modal เอง
  * ทั้งแอปยังล็อกแนวตั้งตาม app.json หน้านี้ล็อกแนวนอนเฉพาะตอนเปิดอยู่ แล้วคืนเป็นแนวตั้งเมื่อปิด
  */
 export default function LineStatusFullscreen({ visible, onClose, timeline, line, isToday }: Props) {
   const { colors: c, isDark } = useTheme();
   const { t } = useLanguage();
-  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(c), [c]);
   const colors = useMemo(() => statusColors(c, isDark), [c, isDark]);
   const now = useNow(isToday && visible);
@@ -127,157 +128,172 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
       supportedOrientations={['portrait', 'landscape']}
       statusBarTranslucent
       navigationBarTranslucent>
-      <View
-        style={[
-          styles.screen,
-          {
-            paddingTop: Math.max(insets.top, spacing.md),
-            // จอแนวนอนมีรอยบากหรือแถบ gesture อยู่ด้านข้าง เว้นให้พ้นไม่ให้ทับเนื้อหา
-            paddingLeft: Math.max(insets.left, spacing.lg),
-            paddingRight: Math.max(insets.right, spacing.lg),
-            paddingBottom: Math.max(insets.bottom, spacing.md),
-          },
-        ]}>
-        <View style={styles.header}>
-          <View style={styles.linePill}>
-            <Text style={styles.linePillText}>{line.toUpperCase()}</Text>
-          </View>
-          <View style={styles.headerText}>
-            <Text style={styles.title} numberOfLines={1}>
-              {t('timelineTitle')}
-            </Text>
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {formatDateString(new Date(timeline.shiftStart))} ·{' '}
-              {isToday ? t('shiftToday') : t('shiftPast')}
-            </Text>
-          </View>
-
-          <View style={styles.segmented}>
-            {RANGES.map((r) => {
-              const active = r.value === range;
-              return (
-                <TouchableOpacity
-                  key={r.value}
-                  onPress={() => {
-                    setRange(r.value);
-                    setSelected(null);
-                  }}
-                  style={[styles.segmentButton, active && styles.segmentButtonActive]}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}>
-                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                    {t(r.label)}
+      {/* Modal บน Android เป็นหน้าต่างแยก ต้องมี GestureHandlerRootView ของตัวเอง ไม่งั้นบีบนิ้วซูมไม่ทำงาน */}
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        {/*
+          วัดระยะขอบจากหน้าต่างของ Modal เอง ไม่ใช้ค่าจากหน้าจอหลัก
+          ค่าจากหน้าจอหลักไม่รู้ว่าเครื่องที่ใช้ปุ่มนำทาง 3 ปุ่ม ย้ายแถบปุ่มไปไว้ขวามือตอนแนวนอน
+          ปุ่มปิด ช่องสรุป และป้ายเวลาจึงถูกแถบปุ่มทับ ส่วนรอยบากกล้องด้านซ้ายก็กันไว้ด้วย
+        */}
+        <SafeAreaProvider>
+          <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
+            <View style={styles.screen}>
+              <View style={styles.header}>
+                <View style={styles.linePill}>
+                  <Text style={styles.linePillText}>{line.toUpperCase()}</Text>
+                </View>
+                <View style={styles.headerText}>
+                  <Text style={styles.title} numberOfLines={1}>
+                    {t('timelineTitle')}
                   </Text>
+                  <Text style={styles.subtitle} numberOfLines={1}>
+                    {formatDateString(new Date(timeline.shiftStart))} ·{' '}
+                    {isToday ? t('shiftToday') : t('shiftPast')}
+                  </Text>
+                </View>
+
+                <View style={styles.segmented}>
+                  {RANGES.map((r) => {
+                    const active = r.value === range;
+                    return (
+                      <TouchableOpacity
+                        key={r.value}
+                        onPress={() => {
+                          setRange(r.value);
+                          setSelected(null);
+                        }}
+                        style={[styles.segmentButton, active && styles.segmentButtonActive]}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: active }}>
+                        <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                          {t(r.label)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.zoomGroup}>
+                  <TouchableOpacity
+                    // ปัดแบบเดียวกับปุ่มของเว็บ ซูมด้วยนิ้วค้างไว้ที่ 2.4x กด − ได้ 1x กด + ได้ 3x
+                    onPress={() => setZoom((z) => Math.max(Math.floor(z) - 1, MIN_ZOOM))}
+                    disabled={zoom <= MIN_ZOOM}
+                    style={[styles.zoomButton, zoom <= MIN_ZOOM && styles.disabled]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('timelineZoomOut')}>
+                    <View style={styles.zoomLine} />
+                  </TouchableOpacity>
+                  <Text style={styles.zoomValue}>{zoom % 1 === 0 ? zoom : zoom.toFixed(1)}x</Text>
+                  <TouchableOpacity
+                    onPress={() => setZoom((z) => Math.min(Math.floor(z) + 1, MAX_ZOOM))}
+                    disabled={zoom >= MAX_ZOOM}
+                    style={[styles.zoomButton, zoom >= MAX_ZOOM && styles.disabled]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('timelineZoomIn')}>
+                    <View style={styles.zoomLine} />
+                    <View style={[styles.zoomLine, styles.zoomLineVertical]} />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.closeButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('timelineClose')}>
+                  {/* วาดกากบาทเอง แทนตัวอักษร ✕ ที่บาง font บน Android แสดงไม่ขึ้น */}
+                  <View style={[styles.closeLine, styles.closeLineA]} />
+                  <View style={[styles.closeLine, styles.closeLineB]} />
                 </TouchableOpacity>
-              );
-            })}
-          </View>
+              </View>
 
-          <View style={styles.zoomGroup}>
-            <TouchableOpacity
-              onPress={() => setZoom((z) => Math.max(z - 1, MIN_ZOOM))}
-              disabled={zoom <= MIN_ZOOM}
-              style={[styles.zoomButton, zoom <= MIN_ZOOM && styles.disabled]}
-              accessibilityRole="button"
-              accessibilityLabel={t('timelineZoomOut')}>
-              <View style={styles.zoomLine} />
-            </TouchableOpacity>
-            <Text style={styles.zoomValue}>{zoom}x</Text>
-            <TouchableOpacity
-              onPress={() => setZoom((z) => Math.min(z + 1, MAX_ZOOM))}
-              disabled={zoom >= MAX_ZOOM}
-              style={[styles.zoomButton, zoom >= MAX_ZOOM && styles.disabled]}
-              accessibilityRole="button"
-              accessibilityLabel={t('timelineZoomIn')}>
-              <View style={styles.zoomLine} />
-              <View style={[styles.zoomLine, styles.zoomLineVertical]} />
-            </TouchableOpacity>
-          </View>
+              <View style={styles.stats}>
+                {stats.map((s) => (
+                  <View
+                    key={s.key}
+                    style={[
+                      styles.stat,
+                      // พื้นและขอบย้อมสีตามสถานะ ให้แยกช่องได้ด้วยสีแวบเดียวโดยไม่ต้องอ่านหัวข้อ
+                      {
+                        backgroundColor: withAlpha(s.color, isDark ? 0.16 : 0.1),
+                        borderColor: withAlpha(s.color, isDark ? 0.45 : 0.35),
+                      },
+                    ]}>
+                    <View style={[styles.statAccent, { backgroundColor: s.color }]} />
+                    <Text style={[styles.statLabel, { color: s.color }]} numberOfLines={1}>
+                      {s.label}
+                    </Text>
+                    {/* ตัวเลขชิดซ้าย บรรทัดรองชิดขวาในแถวเดียวกัน ให้เนื้อหาเต็มความกว้างของช่อง */}
+                    <View style={styles.statBody}>
+                      <Text style={styles.statValueRow} numberOfLines={1}>
+                        <Text style={styles.statValue}>{s.value}</Text>
+                        <Text style={styles.statUnit}> {s.unit}</Text>
+                      </Text>
+                      <Text style={styles.statSub} numberOfLines={1}>
+                        {s.sub}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
 
-          <TouchableOpacity
-            onPress={onClose}
-            style={styles.closeButton}
-            accessibilityRole="button"
-            accessibilityLabel={t('timelineClose')}>
-            {/* วาดกากบาทเอง แทนตัวอักษร ✕ ที่บาง font บน Android แสดงไม่ขึ้น */}
-            <View style={[styles.closeLine, styles.closeLineA]} />
-            <View style={[styles.closeLine, styles.closeLineB]} />
-          </TouchableOpacity>
-        </View>
+              <View style={styles.chart}>
+                {/* สูงคงที่ ไม่ว่าจะมีรายละเอียดหรือไม่ แถบด้านล่างจะได้ไม่ขยับขึ้นลงตอนแตะ */}
+                <View style={styles.detailRow}>
+                  {current ? (
+                    <>
+                      <View style={[styles.detailDot, { backgroundColor: colors[current.kind] }]} />
+                      <Text style={styles.detailText} numberOfLines={1}>
+                        <Text style={styles.detailStrong}>
+                          {t(current.kind === 'break' ? 'timelinePlanStop' : 'timelineLineStop')}
+                        </Text>
+                        {`  ${hhmmss(current.start)} – ${hhmmss(current.end)}  ·  `}
+                        <Text style={styles.detailStrong}>
+                          {current.mins.toFixed(2)} {t('timelineMinutes')}
+                        </Text>
+                        {current.status ? `  ·  ${current.status}` : ''}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.detailHint} numberOfLines={1}>
+                      {t('timelineTapHint')}
+                    </Text>
+                  )}
+                </View>
 
-        <View style={styles.stats}>
-          {stats.map((s) => (
-            <View
-              key={s.key}
-              style={[
-                styles.stat,
-                // พื้นและขอบย้อมสีตามสถานะ ให้แยกช่องได้ด้วยสีแวบเดียวโดยไม่ต้องอ่านหัวข้อ
-                {
-                  backgroundColor: withAlpha(s.color, isDark ? 0.16 : 0.1),
-                  borderColor: withAlpha(s.color, isDark ? 0.45 : 0.35),
-                },
-              ]}>
-              <View style={[styles.statAccent, { backgroundColor: s.color }]} />
-              <Text style={[styles.statLabel, { color: s.color }]} numberOfLines={1}>
-                {s.label}
-              </Text>
-              {/* ตัวเลขชิดซ้าย บรรทัดรองชิดขวาในแถวเดียวกัน ให้เนื้อหาเต็มความกว้างของช่อง */}
-              <View style={styles.statBody}>
-                <Text style={styles.statValueRow} numberOfLines={1}>
-                  <Text style={styles.statValue}>{s.value}</Text>
-                  <Text style={styles.statUnit}> {s.unit}</Text>
-                </Text>
-                <Text style={styles.statSub} numberOfLines={1}>
-                  {s.sub}
-                </Text>
+                <TimelineBar
+                  view={view}
+                  live={live}
+                  endPrefix={live ? t('timelineNow') : undefined}
+                  size="full"
+                  zoom={zoom}
+                  onZoomChange={setZoom}
+                  minZoom={MIN_ZOOM}
+                  maxZoom={MAX_ZOOM}
+                  selectedId={current?.id ?? null}
+                  onSelect={setSelected}
+                  style={styles.chartBar}
+                />
               </View>
             </View>
-          ))}
-        </View>
-
-        <View style={styles.chart}>
-          {/* สูงคงที่ ไม่ว่าจะมีรายละเอียดหรือไม่ แถบด้านล่างจะได้ไม่ขยับขึ้นลงตอนแตะ */}
-          <View style={styles.detailRow}>
-            {current ? (
-              <>
-                <View style={[styles.detailDot, { backgroundColor: colors[current.kind] }]} />
-                <Text style={styles.detailText} numberOfLines={1}>
-                  <Text style={styles.detailStrong}>
-                    {t(current.kind === 'break' ? 'timelinePlanStop' : 'timelineLineStop')}
-                  </Text>
-                  {`  ${hhmmss(current.start)} – ${hhmmss(current.end)}  ·  `}
-                  <Text style={styles.detailStrong}>
-                    {current.mins.toFixed(2)} {t('timelineMinutes')}
-                  </Text>
-                  {current.status ? `  ·  ${current.status}` : ''}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.detailHint} numberOfLines={1}>
-                {t('timelineTapHint')}
-              </Text>
-            )}
-          </View>
-
-          <TimelineBar
-            view={view}
-            live={live}
-            endPrefix={live ? t('timelineNow') : undefined}
-            size="full"
-            zoom={zoom}
-            selectedId={current?.id ?? null}
-            onSelect={setSelected}
-            style={styles.chartBar}
-          />
-        </View>
-      </View>
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    screen: { flex: 1, backgroundColor: c.bg, gap: spacing.sm },
+    gestureRoot: { flex: 1 },
+    safeArea: { flex: 1, backgroundColor: c.bg },
+    /** ระยะเว้นรอบเนื้อหา บวกเพิ่มจากระยะขอบของระบบที่ SafeAreaView เว้นให้แล้ว */
+    screen: {
+      flex: 1,
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.xs,
+      paddingBottom: spacing.sm,
+    },
     header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     linePill: {
       paddingHorizontal: spacing.md,

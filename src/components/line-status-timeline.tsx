@@ -10,6 +10,11 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import {
+  Gesture,
+  GestureDetector,
+  ScrollView as GestureScrollView,
+} from 'react-native-gesture-handler';
 
 import {
   viewTimeline,
@@ -132,6 +137,13 @@ interface TimelineBarProps {
   size: 'card' | 'full';
   /** 1 = เห็นทั้งช่วง มากกว่า 1 = ขยายแล้วลากเลื่อนได้ */
   zoom?: number;
+  /**
+   * ส่งมาเมื่อต้องการให้ใช้สองนิ้วถ่าง/หุบซูมได้ ได้ค่าซูมใหม่ระหว่าง minZoom ถึง maxZoom
+   * ต้องอยู่ใต้ GestureHandlerRootView (หน้าเต็มจอครอบไว้ให้แล้ว) การ์ดบนหน้ารายการจึงไม่ส่งมา
+   */
+  onZoomChange?: (zoom: number) => void;
+  minZoom?: number;
+  maxZoom?: number;
   selectedId?: number | null;
   /** ส่งมาเมื่อต้องการให้แตะเลือกช่วงได้ ได้ null เมื่อแตะโดนช่วงที่ไลน์เดินงาน */
   onSelect?: (segment: TimelineSegment | null) => void;
@@ -146,6 +158,9 @@ export function TimelineBar({
   endPrefix,
   size,
   zoom = 1,
+  onZoomChange,
+  minZoom = 1,
+  maxZoom = 10,
   selectedId = null,
   onSelect,
   style,
@@ -160,6 +175,12 @@ export function TimelineBar({
   const prevZoom = useRef(zoom);
   /** ตำแหน่งที่รอเลื่อนไป หลัง ScrollView วัดความกว้างเนื้อหาใหม่เสร็จ */
   const pendingScrollX = useRef<number | null>(null);
+  /** ค่าซูมล่าสุด ให้ gesture ที่สร้างไว้ครั้งเดียวอ่านค่าปัจจุบันได้ ไม่ติดค่าเก่าจากตอนสร้าง */
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  /** จุดยึดตอนซูมด้วยนิ้ว: สัดส่วนตำแหน่งบนแถบที่อยู่ใต้นิ้ว และระยะนิ้วจากขอบซ้ายของจอ */
+  const pinchAnchor = useRef<{ ratio: number; offset: number } | null>(null);
+  const [pinching, setPinching] = useState(false);
 
   const width = viewport.width * zoom;
   const displayEnd = Math.max(view.end, view.start + MIN_RANGE_MS);
@@ -184,10 +205,16 @@ export function TimelineBar({
     // เผื่อทศนิยม เวลาปัจจุบันอยู่ชิดขอบขวาพอดีจะได้ยังนับว่ามองเห็น
     const endWasVisible =
       oldEndX >= scrollX.current - 2 && oldEndX <= scrollX.current + viewport.width + 2;
-    const anchorRatio = endWasVisible
+    let anchorRatio = endWasVisible
       ? endX / width
       : (scrollX.current + viewport.width / 2) / oldWidth;
-    const anchorOffset = endWasVisible ? viewport.width * 0.8 : viewport.width / 2;
+    let anchorOffset = endWasVisible ? viewport.width * 0.8 : viewport.width / 2;
+    // ซูมด้วยนิ้ว ยึดเวลาที่อยู่ใต้นิ้วไว้กับที่ ให้รู้สึกเหมือนดึงภาพขยายตรงจุดที่จับ
+    if (pinchAnchor.current) {
+      anchorRatio = pinchAnchor.current.ratio;
+      anchorOffset = pinchAnchor.current.offset;
+      pinchAnchor.current = null;
+    }
     prevZoom.current = zoom;
     const x = Math.min(Math.max(0, anchorRatio * width - anchorOffset), width - viewport.width);
     // จำตำแหน่งไว้เองด้วย เพราะการเลื่อนด้วยโค้ดไม่รับประกันว่าจะมี onScroll ตามมา
@@ -232,6 +259,39 @@ export function TimelineBar({
   }
 
   const selected = view.segments.find((seg) => seg.id === selectedId) ?? null;
+
+  /**
+   * สองนิ้วถ่าง/หุบเพื่อซูม
+   *
+   * จำค่าซูมและตำแหน่งใต้นิ้วตอนเริ่มบีบ แล้วคิดค่าซูมจากสัดส่วนที่ถ่างออกเทียบกับตอนเริ่ม
+   * ปัดทีละ 0.05 เพื่อไม่ให้วาดแถบใหม่ทุกเฟรมที่นิ้วขยับนิดเดียว
+   * ระหว่างบีบปิดการเลื่อนของ ScrollView ไว้ ไม่งั้นนิ้วที่ขยับจะเลื่อนแถบไปพร้อมกับซูม
+   */
+  const pinchStart = useRef({ zoom: 1, ratio: 0, focalX: 0 });
+  const pinch = useMemo(
+    () =>
+      Gesture.Pinch()
+        .runOnJS(true)
+        .onStart((e) => {
+          const contentWidth = viewport.width * zoomRef.current;
+          pinchStart.current = {
+            zoom: zoomRef.current,
+            ratio: contentWidth > 0 ? (scrollX.current + e.focalX) / contentWidth : 0,
+            focalX: e.focalX,
+          };
+          setPinching(true);
+        })
+        .onUpdate((e) => {
+          if (!onZoomChange) return;
+          const raw = pinchStart.current.zoom * e.scale;
+          const next = Math.min(maxZoom, Math.max(minZoom, Math.round(raw * 20) / 20));
+          if (next === zoomRef.current) return;
+          pinchAnchor.current = { ratio: pinchStart.current.ratio, offset: pinchStart.current.focalX };
+          onZoomChange(next);
+        })
+        .onFinalize(() => setPinching(false)),
+    [viewport.width, onZoomChange, minZoom, maxZoom]
+  );
 
   const content = (
     <View style={{ width, height: viewport.height }}>
@@ -296,7 +356,7 @@ export function TimelineBar({
     </View>
   );
 
-  return (
+  const root = (
     <View
       style={[styles.root, style]}
       onLayout={(e: LayoutChangeEvent) => {
@@ -306,11 +366,13 @@ export function TimelineBar({
       {/*
         ใช้ ScrollView เฉพาะตอนซูม เพราะ ScrollView แนวนอนบน Android ดักการแตะไว้เอง
         แม้ห่อด้วย pointerEvents="none" แตะที่แถบบนการ์ดแล้วจึงไม่เปิดหน้าเต็มจอ
+        ใช้ตัวของ react-native-gesture-handler ให้ทำงานร่วมกับการบีบนิ้วได้โดยไม่แย่งกัน
       */}
       {viewport.width > 0 && zoom > 1 && (
-        <ScrollView
+        <GestureScrollView
           ref={scrollRef}
           horizontal
+          scrollEnabled={!pinching}
           onScroll={(e) => {
             scrollX.current = e.nativeEvent.contentOffset.x;
           }}
@@ -322,11 +384,14 @@ export function TimelineBar({
           }}
           style={StyleSheet.absoluteFill}>
           {content}
-        </ScrollView>
+        </GestureScrollView>
       )}
       {viewport.width > 0 && zoom <= 1 && <View style={StyleSheet.absoluteFill}>{content}</View>}
     </View>
   );
+
+  // GestureDetector ต้องอยู่ใต้ GestureHandlerRootView จึงครอบเฉพาะตอนเปิดให้ซูมด้วยนิ้ว
+  return onZoomChange ? <GestureDetector gesture={pinch}>{root}</GestureDetector> : root;
 }
 
 interface CardProps {

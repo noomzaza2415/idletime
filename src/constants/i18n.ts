@@ -137,7 +137,7 @@ const th = {
   timelineZoomOut: 'ซูมออก',
   timelineLineStop: 'หยุดไลน์',
   timelinePlanStop: 'พัก/หยุดตามแผน',
-  timelineTapHint: 'แตะช่วงบนแถบเพื่อดูรายละเอียด · ซูมแล้วลากเพื่อเลื่อน',
+  timelineTapHint: 'แตะช่วงเพื่อดูรายละเอียด · ถ่าง/หุบสองนิ้วเพื่อซูม · ลากเพื่อเลื่อน',
 };
 
 const en: typeof th = {
@@ -264,7 +264,7 @@ const en: typeof th = {
   timelineZoomOut: 'Zoom out',
   timelineLineStop: 'Line Stop',
   timelinePlanStop: 'Break/Plan Stop',
-  timelineTapHint: 'Tap a segment for details · Zoom in, then drag to pan',
+  timelineTapHint: 'Tap a segment for details · Pinch to zoom · Drag to pan',
 };
 
 export type TranslationKey = keyof typeof th;
