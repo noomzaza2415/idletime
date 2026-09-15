@@ -112,6 +112,13 @@ const th = {
   saveSuccess: 'บันทึกสำเร็จ',
   saveFailed: 'บันทึกไม่สำเร็จ',
   ok: 'ตกลง',
+  yes: 'ใช่',
+  no: 'ไม่ใช่',
+  conflictTitle: 'มีคนแก้รายการนี้ไปก่อนแล้ว',
+  conflictBody: 'ช่องต่อไปนี้ถูกแก้ระหว่างที่คุณกรอกอยู่ ค่าปัจจุบันในระบบคือ',
+  conflictUseLatest: 'ดูข้อมูลล่าสุด',
+  conflictOverwrite: 'บันทึกทับ',
+  draftRestored: 'กู้ข้อความที่กรอกค้างไว้กลับมาแล้ว ยังไม่ได้บันทึก',
 };
 
 const en: typeof th = {
@@ -213,6 +220,13 @@ const en: typeof th = {
   saveSuccess: 'Saved successfully',
   saveFailed: 'Save failed',
   ok: 'OK',
+  yes: 'Yes',
+  no: 'No',
+  conflictTitle: 'Someone else edited this record',
+  conflictBody: 'These fields changed while you were editing. Current values in the system:',
+  conflictUseLatest: 'Show latest',
+  conflictOverwrite: 'Overwrite',
+  draftRestored: 'Restored your unsaved input',
 };
 
 export type TranslationKey = keyof typeof th;

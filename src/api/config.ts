@@ -15,20 +15,30 @@ export const USE_MOCK_DATA = false;
 /** true = ล็อกอินแบบจำลอง (กรอกอะไรก็ผ่าน) ใช้ตอนทดสอบ UI โดยไม่ต่อ auth service */
 export const USE_MOCK_AUTH = false;
 
+/**
+ * กันไม่ให้ release build ออกไปพร้อม mock ที่เปิดค้างไว้
+ * mock auth ทำให้ใครก็เข้าแอปได้ ส่วน mock data ทำให้หน้างานเห็นข้อมูลปลอมแล้วเข้าใจว่าจริง
+ * ให้แอปล้มตั้งแต่เปิด คนทดสอบก่อนแจกจะเห็นทันที ดีกว่าหลุดไปถึงมือลีดเดอร์
+ */
+if (!__DEV__ && (USE_MOCK_AUTH || USE_MOCK_DATA)) {
+  throw new Error('USE_MOCK_AUTH/USE_MOCK_DATA ต้องเป็น false ใน release build (src/api/config.ts)');
+}
+
 export const AUTH_ENDPOINTS = {
   /** POST { email, password } */
   login: '/api/v1/Auth/Login',
 };
 
 /**
- * เปิดเมื่อ backend ทำ endpoint รับ Expo push token เสร็จแล้ว
- * ปิดไว้ก่อนเพื่อไม่ให้แอปยิงหา endpoint ที่ยังไม่มีทุกครั้งที่เปิด
+ * ส่ง FCM token ไปเก็บที่ notify-server ด้วย (สำรองกรณีเขียน Firestore ไม่สำเร็จ)
+ * ตั้ง false เมื่อไม่ได้รัน notify-server เพื่อไม่ให้แอปยิงหา server ที่ไม่มีทุกครั้งที่เปิด
  */
 export const PUSH_TOKEN_REGISTRATION_ENABLED = true;
 
 /**
  * บริการแจ้งเตือนแยกต่างหาก (notify-server) ไม่ใช่ backend หลัก
- * ต้องเป็นที่อยู่สาธารณะ เพราะมือถือที่ใช้เน็ตตัวเองต้องเข้าถึงได้จากนอกโรงงาน
+ * อยู่ใน LAN โรงงานเท่านั้น ห้ามเปิดออกอินเทอร์เน็ต (ดู notify-server/README.md)
+ * push ยังถึงมือถือนอกโรงงานได้เพราะวิ่งผ่าน FCM ส่วนรูปแนบใช้ได้เฉพาะตอนต่อ WiFi โรงงาน
  */
 export const NOTIFY_SERVER_URL = 'http://192.168.2.222:8090';
 
@@ -39,6 +49,8 @@ export const ENDPOINTS = {
   updateRecords: '/api/v1/IdleTime/PutLineIdleTimeAsync',
   /** POST { token, platform, userName } — backend เก็บ token ไว้ใช้ยิง push (ยังต้องสร้างฝั่ง server) */
   registerPushToken: '/api/v1/Notification/RegisterDevice',
+  /** POST { token } — notify-server เลิกส่งแจ้งเตือนมาเครื่องนี้ ใช้ตอนออกจากระบบ */
+  unregisterPushToken: '/api/v1/Notification/UnregisterDevice',
   /** POST สร้างรายการเพิ่มเอง — body เป็น record เดี่ยว */
   createRecord: '/api/v1/IdleTime/PostLineIdleTimeManualAsync',
 };

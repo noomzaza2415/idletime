@@ -99,6 +99,11 @@ async function loadShift(
     const targetIdleTime = latest?.totalIdleTime ?? 0;
 
     // รายการยาว (> 0.60 นาที) นับหมด ส่วนรายการสั้นค่อยๆ เติมจนกว่าผลรวมจะถึงเป้า
+    //
+    // หมายเหตุ: ตอนนี้ smallItems ว่างเสมอ เพราะ valid ด้านบนกรองรายการที่ไม่เกิน
+    // MIN_VISIBLE_MINS (2 นาที) ทิ้งไปแล้ว ส่วนนี้จึงไม่มีผลกับผลลัพธ์
+    // ที่ยังเก็บไว้เพราะเป็นกติกาที่พอร์ตมาจากเว็บ ถ้าวันหนึ่งลด MIN_VISIBLE_MINS
+    // ลงต่ำกว่า 0.6 นาที กติกานี้จะกลับมาทำงานและผลจะตรงกับเว็บเหมือนเดิม
     const mainItems = lineData.filter((item) => (item.totaltimeoffMins ?? 0) > 0.6);
     const smallItems = lineData
       .filter((item) => (item.totaltimeoffMins ?? 0) <= 0.6)
@@ -191,6 +196,7 @@ function applyPatch(raw: ApiIdleTimeRecord, patch: Partial<IdleTimeRecord>): Api
   }
   // สวิตช์ในแอปเป็น true/false แต่ฝั่ง backend เก็บเป็นจำนวนนาทีที่โยนให้ vendor/DJ
   // จึงตีความว่า "ใช่" = ยกเวลาหยุดทั้งก้อนให้ฝ่ายนั้น
+  // มาถึงตรงนี้เฉพาะเมื่อผู้ใช้กดสวิตช์จริง (ดู diffEditable) ค่าบางส่วนที่เว็บกรอกไว้จึงไม่ถูกทับ
   if (patch.vendor !== undefined) next.venDorTime = patch.vendor ? durationMins : 0;
   if (patch.dj !== undefined) next.djTime = patch.dj ? durationMins : 0;
 
@@ -230,35 +236,91 @@ export async function fetchRecords(params: {
   return records.map(toIdleTimeRecord);
 }
 
+/** field ที่หน้ากรอกสาเหตุแก้ได้ — field อื่นเป็นของเครื่องจักรหรือเว็บ แอปห้ามแตะ */
+export const EDITABLE_KEYS = [
+  'idleTimeIssue',
+  'action',
+  'vendor',
+  'dj',
+  'manPower',
+  'type',
+  'dept',
+  'remark',
+] as const;
+
+export type EditableKey = (typeof EDITABLE_KEYS)[number];
+
+/** field ที่ผู้ใช้เปลี่ยนจริง เทียบกับค่าตอนเปิดหน้า */
+export function diffEditable(
+  original: IdleTimeRecord,
+  edited: IdleTimeRecord
+): Partial<Pick<IdleTimeRecord, EditableKey>> {
+  const changes: Partial<Record<EditableKey, unknown>> = {};
+  for (const key of EDITABLE_KEYS) {
+    if (original[key] !== edited[key]) changes[key] = edited[key];
+  }
+  return changes as Partial<Pick<IdleTimeRecord, EditableKey>>;
+}
+
+/**
+ * มีคนแก้ field เดียวกันไปก่อนระหว่างที่ผู้ใช้กรอกอยู่
+ * latest คือข้อมูลล่าสุดในระบบ ให้หน้าจอแสดงค่าจริงและให้ผู้ใช้ตัดสินใจเอง
+ */
+export class RecordConflictError extends Error {
+  constructor(
+    readonly fields: EditableKey[],
+    readonly latest: IdleTimeRecord
+  ) {
+    super('record-conflict');
+    this.name = 'RecordConflictError';
+  }
+}
+
 /**
  * บันทึกรายการเดียวกลับไปที่ backend
  *
- * @param shiftDate วันที่ของกะ ใช้โหลดข้อมูลดิบกลับมาเมื่อ cache ในหน่วยความจำหาย
- *   ซึ่งเกิดได้จริงเมื่อระบบฆ่าแอปทิ้งระหว่างที่ผู้ใช้ค้างอยู่หน้ากรอกสาเหตุ
+ * ส่งเฉพาะ field ที่ผู้ใช้แก้จริง แล้ววางลงบนข้อมูลที่ดึงมาใหม่ก่อน PUT เสมอ
+ * เพราะ API เป็น PUT ทั้งก้อนและไม่มีตัวกันการเขียนทับ ถ้าใช้ข้อมูลใน cache
+ * หรือส่งทุก field ที่หน้าจอถืออยู่ สิ่งที่คนอื่นแก้บนเว็บระหว่างนั้นจะถูกทับหายเงียบ ๆ
+ * รวมถึง venDorTime/djTime ที่เว็บอาจกรอกไว้เป็นนาทีบางส่วน
+ *
+ * @param original ค่าตอนผู้ใช้เปิดหน้า ใช้หาว่าผู้ใช้แก้อะไร และมีใครแก้ชนหรือไม่
+ * @param edited ค่าที่ผู้ใช้กรอกล่าสุด
+ * @param shiftDate วันที่ของกะ ใช้ดึงข้อมูลสดก่อนบันทึก
+ * @param overwrite true = ผู้ใช้ยืนยันแล้วว่าให้ทับของคนอื่น
+ * @throws RecordConflictError เมื่อ field ที่ผู้ใช้แก้ ถูกแก้บน server ไปแล้วและไม่ได้สั่ง overwrite
  */
 export async function updateRecord(
-  id: string,
-  patch: Partial<IdleTimeRecord>,
-  shiftDate?: string
+  original: IdleTimeRecord,
+  edited: IdleTimeRecord,
+  shiftDate: string,
+  overwrite = false
 ): Promise<IdleTimeRecord> {
+  const id = original.id;
+  const changes = diffEditable(original, edited);
+  // ไม่ได้แก้อะไร ไม่ต้องยิง PUT ให้เสี่ยงทับข้อมูลคนอื่นโดยไม่ได้อะไรกลับมา
+  if (Object.keys(changes).length === 0) return edited;
+
   if (USE_MOCK_DATA) {
     await delay(300);
     const idx = MOCK_RECORDS.findIndex((r) => r.id === id);
     if (idx < 0) throw new Error(`ไม่พบรายการ id=${id}`);
-    MOCK_RECORDS[idx] = { ...MOCK_RECORDS[idx], ...patch };
+    MOCK_RECORDS[idx] = { ...MOCK_RECORDS[idx], ...changes };
     return MOCK_RECORDS[idx];
   }
 
-  // API เป็น PUT ทั้งก้อน จึงต้องมี record ดิบครบทุก field ก่อนส่ง
-  // ถ้า cache หายไปให้ไปโหลดมาใหม่เอง ดีกว่าโยน error แล้วทิ้งสิ่งที่ผู้ใช้พิมพ์ไว้
-  let raw = rawById.get(id);
-  if (!raw && shiftDate) {
-    await loadShift(shiftDate, 'ALL');
-    raw = rawById.get(id);
-  }
-  if (!raw) throw new Error(`ไม่พบข้อมูลต้นฉบับของรายการ id=${id} กรุณาโหลดรายการใหม่`);
+  // ดึงสดทุกครั้ง ไม่ใช้ cache — เป็นคำสั่งอ่านจึงลองซ้ำเองได้เมื่อสัญญาณสะดุด
+  await loadShift(shiftDate, 'ALL');
+  const raw = rawById.get(id);
+  if (!raw) throw new Error(`ไม่พบรายการ id=${id} ในระบบแล้ว กรุณาโหลดรายการใหม่`);
 
-  const updated = applyPatch(raw, patch);
+  const latest = toIdleTimeRecord(raw, 0);
+  const conflicts = (Object.keys(changes) as EditableKey[]).filter(
+    (key) => latest[key] !== original[key]
+  );
+  if (conflicts.length > 0 && !overwrite) throw new RecordConflictError(conflicts, latest);
+
+  const updated = applyPatch(raw, changes);
   await request<unknown>(ENDPOINTS.updateRecords, {
     method: 'PUT',
     // API รับเป็น array เสมอ แม้จะแก้แค่รายการเดียว

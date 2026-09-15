@@ -96,14 +96,19 @@ export function createPhotoRouter(store) {
     res.json({ isSuccess: true, result: saved.map(toDto) });
   });
 
-  /** ลบรูปหนึ่งใบออกจากรายการ */
+  /**
+   * ลบรูปหนึ่งใบออกจากรายการ — ย้ายไป _trash ไม่ได้ลบจริง (ดู PhotoStore.remove)
+   * body: { userName } ใช้จดว่าใครลบ ไม่ได้ใช้ยืนยันตัวตน
+   */
   router.delete('/:idleTimeId/:fileName', (req, res) => {
     const { idleTimeId, fileName } = req.params;
     if (!isValidRecordId(idleTimeId)) return fail(res, 400, 'id รายการไม่ถูกต้อง');
     if (!isValidFileName(fileName)) return fail(res, 400, 'ชื่อไฟล์ไม่ถูกต้อง');
-    if (!store.remove(idleTimeId, fileName)) return fail(res, 404, 'ไม่พบรูปนี้ในรายการ');
 
-    console.log(`ลบรูป ${fileName} ของรายการ ${idleTimeId}`);
+    const userName = typeof req.body?.userName === 'string' ? req.body.userName.slice(0, 200) : null;
+    if (!store.remove(idleTimeId, fileName, userName)) return fail(res, 404, 'ไม่พบรูปนี้ในรายการ');
+
+    console.log(`ลบรูป ${fileName} ของรายการ ${idleTimeId} โดย ${userName ?? '-'}`);
     res.json({ isSuccess: true, result: 'deleted' });
   });
 

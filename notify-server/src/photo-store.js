@@ -1,13 +1,13 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { getShiftDateString } from './idle-rules.js';
 
@@ -78,6 +78,8 @@ export class PhotoStore {
   constructor(rootDir, indexFile) {
     this.rootDir = rootDir;
     this.indexFile = indexFile;
+    /** บันทึกการลบรูป อยู่ข้าง photos.json ให้สำรองไปพร้อมกัน */
+    this.deletionLog = join(dirname(indexFile), 'photo-deletions.log');
     /** @type {Map<string, Array<{fileName: string, size: number, userName: string|null, createdAt: string}>>} */
     this.byRecord = new Map();
     this.#load();
@@ -173,22 +175,49 @@ export class PhotoStore {
   }
 
   /**
-   * ลบรูปหนึ่งใบทั้งไฟล์และรายการอ้างอิง
+   * เอารูปหนึ่งใบออกจากรายการ
+   *
+   * ไม่ลบไฟล์ทิ้งจริง แต่ย้ายไปไว้ใน _trash และจดว่าใครลบ เพราะรูปคือหลักฐานว่าไลน์หยุดเพราะอะไร
+   * เส้นลบไม่มีการยืนยันตัวตน และลีดเดอร์ทุกคนลบรูปของทุกไลน์ได้ ถ้าลบผิดต้องกู้คืนได้
+   *
+   * @param {string|null} userName ผู้ที่สั่งลบ ตามที่แอปส่งมา
    * @returns {boolean} false เมื่อไม่เจอรูปนั้นในรายการที่ระบุ
    */
-  remove(recordId, fileName) {
+  remove(recordId, fileName, userName = null, now = new Date()) {
     const list = this.byRecord.get(recordId);
     const index = list?.findIndex((p) => p.fileName === fileName) ?? -1;
     if (!list || index < 0) return false;
 
-    list.splice(index, 1);
+    const [entry] = list.splice(index, 1);
     if (list.length === 0) this.byRecord.delete(recordId);
     else this.byRecord.set(recordId, list);
     this.#save();
 
-    // ลบไฟล์ทีหลัง ถ้าไฟล์หายไปก่อนแล้วก็ถือว่าจบงาน ไม่ต้องโวย
-    rmSync(this.pathOf(fileName), { force: true });
+    const trashPath = this.trashPathOf(fileName);
+    try {
+      mkdirSync(dirname(trashPath), { recursive: true });
+      renameSync(this.pathOf(fileName), trashPath);
+    } catch (err) {
+      // ไฟล์หายไปก่อนแล้วก็ถือว่าจบงาน ไม่ต้องโวย ส่วนกรณีอื่นยังจดลง log ไว้ให้ตามได้
+      if (err.code !== 'ENOENT') console.error(`ย้ายรูป ${fileName} ไป _trash ไม่สำเร็จ:`, err.message);
+    }
+
+    try {
+      mkdirSync(dirname(this.deletionLog), { recursive: true });
+      appendFileSync(
+        this.deletionLog,
+        `${JSON.stringify({ deletedAt: now.toISOString(), deletedBy: userName, recordId, ...entry })}\n`
+      );
+    } catch (err) {
+      console.error('จดบันทึกการลบรูปไม่สำเร็จ:', err.message);
+    }
     return true;
+  }
+
+  /** ที่เก็บรูปที่ถูกลบ แยกเดือนเหมือนรูปปกติ กู้คืนแค่ย้ายกลับโฟลเดอร์เดือนเดิม */
+  trashPathOf(fileName) {
+    const livePath = this.pathOf(fileName);
+    return join(this.rootDir, '_trash', basename(dirname(livePath)), fileName);
   }
 
   /** ไฟล์ยังอยู่บนดิสก์จริงไหม เผื่อ index กับดิสก์ไม่ตรงกัน */

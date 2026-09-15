@@ -8,11 +8,13 @@ const BATCH_SIZE = 500;
 /**
  * รหัส error ที่แปลว่า token ใช้ไม่ได้ถาวร ต้องเลิกส่งไปเครื่องนั้น
  * ถ้าไม่ตัดออก token ตายจะค้างสะสมจน log เต็มไปด้วย error และเปลืองโควตา
+ *
+ * ห้ามใส่ messaging/invalid-argument เพราะ error นี้เกิดจาก payload ผิดรูปแบบก็ได้
+ * ซึ่งจะตอบกลับมาทุก token ในรอบนั้น แล้วเครื่องทั้งโรงงานถูกปิดแจ้งเตือนพร้อมกันเงียบ ๆ
  */
 const DEAD_TOKEN_ERRORS = new Set([
   'messaging/registration-token-not-registered',
   'messaging/invalid-registration-token',
-  'messaging/invalid-argument',
 ]);
 
 /** ช่องแจ้งเตือนฝั่ง Android — ต้องตรงกับที่แอปสร้างไว้ ไม่งั้นจะไม่ได้เสียงและ importance ที่ตั้งไว้ */

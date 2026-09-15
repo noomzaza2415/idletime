@@ -10,6 +10,11 @@ import {
 } from 'react';
 
 import { login as loginApi } from '@/api/idle-time-service';
+import {
+  clearPendingDeactivation,
+  deactivateDeviceOnLogout,
+  retryPendingDeactivation,
+} from '@/api/notification-preference';
 
 interface AuthState {
   isLoading: boolean;
@@ -52,8 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (token && !isExpired) {
         setIsLoggedIn(true);
         setUserName(name);
-      } else if (token) {
-        await AsyncStorage.multiRemove(STORAGE_KEYS);
+      } else {
+        if (token) await AsyncStorage.multiRemove(STORAGE_KEYS);
+        // ออกจากระบบรอบก่อนตอนเน็ตหลุด ยังไม่ได้ปิดแจ้งเตือนที่ต้นทาง ลองอีกครั้ง
+        void retryPendingDeactivation();
       }
       setIsLoading(false);
     })();
@@ -61,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const { token, name } = await loginApi(email, password);
+    await clearPendingDeactivation();
     await AsyncStorage.multiSet([
       ['authToken', token],
       ['userName', name],
@@ -71,6 +79,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // ไม่รอผล — ออกจากระบบต้องเสร็จทันทีแม้เน็ตหลุด ส่วนที่ส่งไม่สำเร็จจะถูกลองใหม่ตอนเปิดแอป
+    void deactivateDeviceOnLogout();
     await AsyncStorage.multiRemove(STORAGE_KEYS);
     setIsLoggedIn(false);
     setUserName(null);

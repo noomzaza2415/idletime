@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
+import { fetchWithTimeout } from '@/api/http';
+
 /**
  * เขียน FCM token ลง Firestore โดยตรง
  *
@@ -63,7 +65,7 @@ async function resumeIdentity(apiKey: string): Promise<Identity | null> {
   if (!uid || !refreshToken) return null;
 
   try {
-    const res = await fetch(`${REFRESH_URL}?key=${apiKey}`, {
+    const res = await fetchWithTimeout(`${REFRESH_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
@@ -83,7 +85,7 @@ async function resumeIdentity(apiKey: string): Promise<Identity | null> {
 
 /** สร้างตัวตนนิรนามใหม่ ใช้เฉพาะครั้งแรกที่ติดตั้งแอป */
 async function createIdentity(apiKey: string): Promise<Identity | null> {
-  const res = await fetch(`${SIGN_UP_URL}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${SIGN_UP_URL}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ returnSecureToken: true }),
@@ -136,7 +138,7 @@ export async function saveDeviceToFirestore(
       `${COLLECTION}/${auth.uid}`;
 
     // Firestore REST ต้องระบุชนิดของทุกค่าเอง ไม่รับ JSON ธรรมดา
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',

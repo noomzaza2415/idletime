@@ -64,6 +64,20 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 /**
+ * FCM token ของเครื่องนี้โดยไม่ขอสิทธิ์เพิ่ม
+ *
+ * ใช้ตอนออกจากระบบ ซึ่งไม่ควรมีหน้าต่างขอสิทธิ์แจ้งเตือนเด้งขึ้นมา
+ * ถ้ายังไม่เคยให้สิทธิ์ เครื่องนี้ก็แสดงแจ้งเตือนไม่ได้อยู่แล้ว จึงคืน null ได้เลย
+ */
+export async function getExistingPushToken(): Promise<string | null> {
+  if (!Device.isDevice) return null;
+  const { granted } = await Notifications.getPermissionsAsync();
+  if (!granted) return null;
+  const token = await Notifications.getDevicePushTokenAsync();
+  return String(token.data);
+}
+
+/**
  * คืน FCM token ให้เอาไปฝากไว้ที่ notify-server สำหรับยิง push ตอนปิดแอป
  * คืน null ถ้าไม่ได้รับสิทธิ์ หรือรันบน emulator ที่ขอ token ไม่ได้
  */

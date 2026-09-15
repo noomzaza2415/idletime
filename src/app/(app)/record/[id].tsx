@@ -15,8 +15,22 @@ import {
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { fetchRecordById, updateRecord } from '@/api/idle-time-service';
+import {
+  diffEditable,
+  fetchRecordById,
+  RecordConflictError,
+  updateRecord,
+  type EditableKey,
+} from '@/api/idle-time-service';
 import { getShiftDateString } from '@/api/idle-rules';
+import {
+  clearDraft,
+  clearPendingPhoto,
+  loadDraft,
+  markPendingPhoto,
+  readPendingPhoto,
+  saveDraft,
+} from '@/api/record-draft';
 import {
   deleteRecordPhoto,
   getRecordPhotos,
@@ -25,6 +39,7 @@ import {
   type RecordPhoto,
 } from '@/api/photo-store';
 import PhotoUploadCard from '@/components/photo-upload-card';
+import type { TranslationKey } from '@/constants/i18n';
 import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
@@ -39,6 +54,21 @@ function toPicked(asset: ImagePicker.ImagePickerAsset): PickedPhoto {
   return { uri: asset.uri, width: asset.width, height: asset.height };
 }
 
+/** ชื่อช่องที่ใช้บอกผู้ใช้ตอนมีคนแก้ชน ให้ตรงกับหัวข้อที่เห็นบนหน้าจอ */
+const FIELD_LABEL: Record<EditableKey, TranslationKey> = {
+  idleTimeIssue: 'idleIssueLabel',
+  action: 'actionLabel',
+  vendor: 'waitVendor',
+  dj: 'waitDJ',
+  manPower: 'manPowerLabel',
+  type: 'typeLabel',
+  dept: 'deptLabel',
+  remark: 'remarkLabel',
+};
+
+/** ช่องที่อยู่ในส่วน "ข้อมูลเพิ่มเติม" ต้องกางออกให้เห็นเมื่อมีการแก้ชน */
+const MORE_KEYS: EditableKey[] = ['vendor', 'dj', 'manPower', 'type', 'dept', 'remark'];
+
 export default function RecordDetailScreen() {
   // date ส่งมาจากหน้ารายการ เพื่อให้เปิดรายการของวันย้อนหลังได้ถูกกะ
   const { id, date } = useLocalSearchParams<{ id: string; date?: string }>();
@@ -50,6 +80,12 @@ export default function RecordDetailScreen() {
   const { userName } = useAuth();
   const styles = useMemo(() => createStyles(c), [c]);
   const [record, setRecord] = useState<IdleTimeRecord | null>(null);
+  /**
+   * ค่าในระบบตอนเริ่มกรอก ใช้หาว่าผู้ใช้แก้ช่องไหน และตรวจว่ามีคนแก้ชนก่อนบันทึก
+   * ต้องแยกจาก record เพราะ record เปลี่ยนตามทุกตัวอักษรที่พิมพ์
+   */
+  const [original, setOriginal] = useState<IdleTimeRecord | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showMore, setShowMore] = useState(false);
@@ -76,8 +112,28 @@ export default function RecordDetailScreen() {
             return [];
           }),
         ]);
-        setRecord(found);
         setPhotos(savedPhotos);
+
+        if (found) {
+          // มีร่างค้างจากรอบที่แอปถูกปิดไป ใช้ค่าตั้งต้นของร่างเป็นฐานตรวจการแก้ชน
+          // ถ้าระหว่างนั้นมีคนแก้ช่องเดียวกัน ตอนบันทึกจะถูกถามก่อน ไม่ทับเงียบ ๆ
+          const draft = await loadDraft(id);
+          setOriginal(draft ? { ...found, ...draft.base } : found);
+          setRecord(draft ? { ...found, ...draft.values } : found);
+          setDraftRestored(draft !== null);
+        }
+        setLoading(false);
+
+        // แอปถูกปิดระหว่างถ่ายหรือเลือกรูปให้รายการนี้ ดึงรูปที่ค้างอยู่มาอัปโหลดต่อ
+        // เช็ก id ก่อนเสมอ แนบรูปผิดรายการแย่กว่ารูปหาย
+        const pending = await readPendingPhoto();
+        if (found && pending?.id === id) {
+          await clearPendingPhoto();
+          const result = await ImagePicker.getPendingResultAsync();
+          if (result && 'canceled' in result && !result.canceled) {
+            await addPhotos(result.assets.map(toPicked));
+          }
+        }
       } catch (e) {
         Alert.alert(t('loadRecordFailed'), e instanceof Error ? e.message : t('tryAgain'));
       } finally {
@@ -85,6 +141,19 @@ export default function RecordDetailScreen() {
       }
     })();
   }, [id, shiftDate]);
+
+  /**
+   * เก็บร่างทุกครั้งที่หยุดพิมพ์ครู่หนึ่ง และลบทิ้งเมื่อไม่มีอะไรต่างจากในระบบแล้ว
+   * หน่วงไว้ไม่ให้เขียน storage ทุกตัวอักษร
+   */
+  useEffect(() => {
+    if (!record || !original) return;
+    const timer = setTimeout(() => {
+      const changed = Object.keys(diffEditable(original, record)).length > 0;
+      void (changed ? saveDraft(id, original, record) : clearDraft(id));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [id, record, original]);
 
   async function addPhotos(picked: PickedPhoto[]) {
     setProgress(0);
@@ -106,7 +175,7 @@ export default function RecordDetailScreen() {
         onPress: async () => {
           try {
             // ลบทีละใบเพราะ server ไม่มีเส้นลบทั้งชุด ทำแบบนี้ยังปลอดภัยกว่าเพิ่มเส้นลบเป็นกลุ่ม
-            for (const photo of photos) await deleteRecordPhoto(id, photo.fileName);
+            for (const photo of photos) await deleteRecordPhoto(id, photo.fileName, userName);
             setPhotos([]);
           } catch (e) {
             Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
@@ -117,17 +186,33 @@ export default function RecordDetailScreen() {
     ]);
   }
 
+  /**
+   * เปิดกล้องหรือคลังภาพ โดยจดไว้ก่อนว่ากำลังเลือกรูปให้รายการไหน
+   * Android อาจปิดแอประหว่างนั้น พอเปิดกลับมาจะได้พากลับมาแนบรูปให้ถูกรายการ
+   */
+  async function launchPicker(launch: () => Promise<ImagePicker.ImagePickerResult>) {
+    await markPendingPhoto({ id, date: shiftDate });
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await launch();
+    } finally {
+      await clearPendingPhoto();
+    }
+    if (!result.canceled) await addPhotos(result.assets.map(toPicked));
+  }
+
   async function takePhoto() {
     const { granted } = await ImagePicker.requestCameraPermissionsAsync();
     if (!granted) {
       Alert.alert(t('cameraDenied'), t('cameraDeniedBody'));
       return;
     }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.6, // ลดขนาดไฟล์ไว้ก่อน เผื่อวันหลังต้องอัปโหลดขึ้น backend
-    });
-    if (!result.canceled) await addPhotos(result.assets.map(toPicked));
+    await launchPicker(() =>
+      ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.6, // ลดขนาดไฟล์ไว้ก่อน เผื่อวันหลังต้องอัปโหลดขึ้น backend
+      })
+    );
   }
 
   async function pickFromLibrary() {
@@ -136,12 +221,13 @@ export default function RecordDetailScreen() {
       Alert.alert(t('libraryDenied'), t('libraryDeniedBody'));
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true, // เลือกทีเดียวได้หลายรูป
-      quality: 0.6,
-    });
-    if (!result.canceled) await addPhotos(result.assets.map(toPicked));
+    await launchPicker(() =>
+      ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true, // เลือกทีเดียวได้หลายรูป
+        quality: 0.6,
+      })
+    );
   }
 
   function choosePhotoSource() {
@@ -159,7 +245,7 @@ export default function RecordDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteRecordPhoto(id, photo.fileName);
+            await deleteRecordPhoto(id, photo.fileName, userName);
             setPhotos((prev) => prev.filter((p) => p.fileName !== photo.fileName));
           } catch (e) {
             Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
@@ -174,17 +260,62 @@ export default function RecordDetailScreen() {
     setRecord((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
 
-  async function handleSave() {
-    if (!record) return;
+  async function handleSave(overwrite = false) {
+    if (!record || !original) return;
     setSaving(true);
     try {
-      await updateRecord(record.id, record, shiftDate);
+      await updateRecord(original, record, shiftDate, overwrite);
+      // ฐานใหม่คือค่าที่เพิ่งบันทึก ตัวเก็บร่างจะเห็นว่าไม่มีอะไรค้างแล้วลบร่างทิ้งเอง
+      setOriginal(record);
+      await clearDraft(id);
       Alert.alert(t('saveSuccess'), undefined, [{ text: t('ok'), onPress: () => router.back() }]);
     } catch (e) {
-      Alert.alert(t('saveFailed'), e instanceof Error ? e.message : t('tryAgain'));
+      if (e instanceof RecordConflictError) {
+        showConflict(e);
+      } else {
+        Alert.alert(t('saveFailed'), e instanceof Error ? e.message : t('tryAgain'));
+      }
     } finally {
       setSaving(false);
     }
+  }
+
+  function formatValue(value: IdleTimeRecord[EditableKey]) {
+    if (typeof value === 'boolean') return value ? t('yes') : t('no');
+    return value === '' ? '-' : String(value);
+  }
+
+  /**
+   * บอกผู้ใช้ว่าช่องไหนถูกคนอื่นแก้ไปแล้วและตอนนี้ในระบบเป็นค่าอะไร แล้วให้เลือกเอง
+   *
+   * "ดูข้อมูลล่าสุด" เอาค่าจากระบบมาใส่เฉพาะช่องที่ชน ช่องอื่นที่ผู้ใช้กรอกไว้ยังอยู่ครบ
+   * ผู้ใช้ตรวจแล้วกดบันทึกอีกครั้งได้เลย ส่วน "บันทึกทับ" ใช้เมื่อมั่นใจว่าของตัวเองถูก
+   */
+  function showConflict(conflict: RecordConflictError) {
+    const lines = conflict.fields
+      .map((key) => `• ${t(FIELD_LABEL[key])}: ${formatValue(conflict.latest[key])}`)
+      .join('\n');
+
+    Alert.alert(t('conflictTitle'), `${t('conflictBody')}\n${lines}`, [
+      {
+        text: t('conflictOverwrite'),
+        style: 'destructive',
+        onPress: () => void handleSave(true),
+      },
+      {
+        text: t('conflictUseLatest'),
+        onPress: () => {
+          const latestValues: Partial<IdleTimeRecord> = {};
+          for (const key of conflict.fields) {
+            (latestValues as Record<EditableKey, unknown>)[key] = conflict.latest[key];
+          }
+          setRecord((prev) => (prev ? { ...prev, ...latestValues } : prev));
+          setOriginal(conflict.latest);
+          if (conflict.fields.includes('idleTimeIssue')) setManualEntry(false);
+          if (conflict.fields.some((key) => MORE_KEYS.includes(key))) setShowMore(true);
+        },
+      },
+    ]);
   }
 
   if (loading) {
@@ -244,6 +375,8 @@ export default function RecordDetailScreen() {
           </View>
         </View>
       </View>
+
+      {draftRestored && <Text style={styles.draftNotice}>{t('draftRestored')}</Text>}
 
       <PhotoUploadCard
         photos={photos}
@@ -393,7 +526,7 @@ export default function RecordDetailScreen() {
         </View>
       )}
 
-      <TouchableOpacity style={styles.saveButton} onPress={handleSave} disabled={saving}>
+      <TouchableOpacity style={styles.saveButton} onPress={() => handleSave()} disabled={saving}>
         {saving ? (
           <ActivityIndicator color={c.onPrimary} />
         ) : (
@@ -408,6 +541,15 @@ const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   notFound: { textAlign: 'center', marginTop: spacing.xl, color: c.textSecondary },
+  draftNotice: {
+    marginBottom: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: c.chipBg,
+    color: c.primary,
+    fontSize: font.small,
+    fontWeight: '600',
+  },
   infoCard: {
     backgroundColor: c.surface,
     borderRadius: radius.lg,

@@ -14,8 +14,12 @@
 | `google-services.json` | Project settings → Your apps → Android app<br>ใส่ package name `com.noomzaza.idletime` | รากโปรเจกต์แอป (ข้าง `app.json`) |
 | service account key | Project settings → Service accounts → Generate new private key | `notify-server/firebase-service-account.json` |
 
-**3. ที่อยู่สาธารณะ** — มือถือที่ใช้เน็ตตัวเอง (ไม่ได้ต่อ WiFi โรงงาน) ต้องเข้าถึง server ได้
-ต้องมีอย่างใดอย่างหนึ่ง: public IP + port forward, domain, หรือ tunnel เช่น Cloudflare Tunnel
+**3. เครื่อง server ใน LAN โรงงาน** — บริการนี้ใช้เฉพาะใน WiFi โรงงานเท่านั้น
+**ห้ามทำ port forward หรือเปิดออกอินเทอร์เน็ต** เพราะเส้นรูปแนบและลงทะเบียนเครื่องไม่มีการยืนยันตัวตน
+(ดูหัวข้อ "ข้อควรระวังเรื่องความปลอดภัย") ถ้าวันหนึ่งต้องใช้นอกโรงงานจริง ให้ใส่การยืนยันตัวตนก่อน
+
+push ยังส่งถึงมือถือที่อยู่นอกโรงงานได้ตามปกติ เพราะวิ่งผ่าน FCM ของ Google ไม่ได้วิ่งเข้า server นี้
+ส่วนการต่ออายุ token จากนอกโรงงานทำผ่าน Firestore
 
 ## ติดตั้งบน server
 
@@ -130,11 +134,25 @@ sudo systemctl enable --now idletime-notify
 
 ### `GET /health`
 
-ตรวจว่าบริการยังอยู่ และดูว่ามีกี่เครื่องลงทะเบียนไว้ ไม่ต้องใช้กุญแจ
+ตรวจว่าบริการยังทำงานจริง ไม่ต้องใช้กุญแจ `HEALTHCHECK` ใน Dockerfile เรียกเส้นนี้ทุก 30 วินาที
+
+ตอบ **503** เมื่อ watcher ดึงรายการจาก Idle Time API ไม่สำเร็จนานเกิน 5 นาที (หรือ 3 รอบ poll)
+ซึ่ง `docker ps` จะขึ้นว่า `unhealthy` ให้เช็กสถานะนี้เป็นระยะ เพราะถ้าบริการยังรันแต่ไม่ได้เฝ้าอะไรเลย
+ลีดเดอร์จะเข้าใจผิดว่าไม่มีแจ้งเตือนเท่ากับไลน์ไม่ได้หยุด
 
 ```json
-{ "isSuccess": true, "result": { "status": "ok", "total": 12, "active": 11 } }
+{
+  "isSuccess": true,
+  "result": {
+    "status": "ok",
+    "watcher": { "healthy": true, "lastOkAt": "2026-09-15T02:10:00.000Z", "lastError": null, "shiftDate": "2026-09-15", "seen": 14 },
+    "local": { "total": 12, "active": 11 },
+    "firestore": null
+  }
+}
 ```
+
+ใส่ `?detail=1` เพื่อให้นับเครื่องใน Firestore ด้วย (อ่านทั้ง collection จึงไม่ได้ทำทุกครั้ง)
 
 ### `POST /api/v1/Notification/RegisterDevice`
 
@@ -142,6 +160,15 @@ sudo systemctl enable --now idletime-notify
 
 ```json
 { "token": "FCM token", "platform": "android", "userName": "somchai@example.com" }
+```
+
+### `POST /api/v1/Notification/UnregisterDevice`
+
+แอปเรียกตอนออกจากระบบ เพื่อเลิกส่งแจ้งเตือนมาเครื่องนั้น ไม่ต้องใช้กุญแจ เพราะต้องรู้ token ของเครื่องจึงจะปิดได้
+ล็อกอินใหม่แล้ว `RegisterDevice` จะเปิดกลับมาที่แถวเดิม
+
+```json
+{ "token": "FCM token" }
 ```
 
 ### `POST /api/v1/Notification/Notify`
@@ -200,7 +227,7 @@ curl -X DELETE   http://<server>:8090/api/v1/IdleTime/Photos/1024/20260909_14253
 
 ```ts
 export const PUSH_TOKEN_REGISTRATION_ENABLED = true;
-export const NOTIFY_SERVER_URL = 'http://<ที่อยู่สาธารณะของ server>:8090';
+export const NOTIFY_SERVER_URL = 'http://<IP ของ server ใน LAN โรงงาน>:8090';
 ```
 
 แล้ว build แอปใหม่ (ต้อง build ไม่ใช่แค่ reload เพราะ `google-services.json` ถูกฝังตอน compile)
@@ -208,10 +235,20 @@ export const NOTIFY_SERVER_URL = 'http://<ที่อยู่สาธาร�
 ## สิ่งที่ออกแบบไว้แล้ว ไม่ต้องทำเพิ่ม
 
 **ยิงรอบเดียว ไม่มีเตือนซ้ำ** — หนึ่งเหตุการณ์เท่ากับหนึ่งแจ้งเตือน ทั้งฝั่ง server และฝั่งแอป
-ทำให้ server ไม่ต้องจำสถานะว่าเคยส่งอะไรไปแล้ว และผู้ใช้ไม่ถูกเด้งซ้ำด้วยเนื้อหาเดิม
+ผู้ใช้ไม่ถูกเด้งซ้ำด้วยเนื้อหาเดิม
+
+**restart กลางกะไม่พลาดรายการ** — watcher จดรายการที่เคยเห็นแล้วไว้ใน `data/watcher-state.json`
+container ที่ดับไปแล้วกลับมา จะแจ้งรายการที่เข้ามาระหว่างนั้นให้ ไม่หายเงียบ ถ้าดับคร่อมช่วงเปลี่ยนกะ
+รอบแรกหลังกลับมาจะแจ้งรายการของกะใหม่ที่ยังไม่มีสาเหตุรวมเป็นแจ้งเตือนเดียว
 
 **token ตายถูกปิดอัตโนมัติ** — เมื่อ FCM ตอบว่า token ใช้ไม่ได้ (ถอนแอป/ปิดแจ้งเตือน)
-บริการจะตั้ง `active: false` ให้เอง ไม่ต้องมีใครไปตามลบ
+บริการจะตั้ง `active: false` ให้เอง ไม่ต้องมีใครไปตามลบ นับเฉพาะ `registration-token-not-registered`
+กับ `invalid-registration-token` เท่านั้น ห้ามเพิ่ม `invalid-argument` เพราะ payload ผิดรูปแบบก็ได้ error นี้
+แล้ว token ทุกเครื่องจะถูกปิดพร้อมกัน
+
+**test** — `npm test` (ต้องใช้ Node 22.18 ขึ้นไป) ตรวจว่ากติกาช่วงพักของแอป (`src/api/idle-rules.ts`)
+กับของ server ตรงกันทุกนาทีของวัน ตรวจการกู้สถานะ watcher และการลบรูปแบบกู้คืนได้
+แก้กติกาฝั่งใดฝั่งหนึ่งแล้ว test จะ fail จนกว่าจะแก้อีกฝั่งให้ตรงกัน
 
 **ส่งทีละ 500** — FCM จำกัด 500 token ต่อ request โค้ดแบ่ง batch ให้แล้ว
 
@@ -229,5 +266,9 @@ export const NOTIFY_SERVER_URL = 'http://<ที่อยู่สาธาร�
 สิ่งที่กันการใช้ผิดคือจำกัดชนิดไฟล์ ขนาดไฟล์ และจำนวนรูปต่อรายการ ชื่อไฟล์ที่รับจากผู้เรียก
 ถูกตรวจด้วย regex ทุกครั้งก่อนเอาไปต่อเป็น path จึงอ่านหรือลบไฟล์นอกโฟลเดอร์รูปไม่ได้
 
-แนะนำให้วางหลัง reverse proxy ที่มี HTTPS (Caddy หรือ nginx) ไม่ควรเปิดพอร์ตตรงสู่อินเทอร์เน็ต
-เพราะตอนนี้ยังเป็น HTTP ล้วน token จะวิ่งแบบไม่เข้ารหัส
+เพราะเหตุนี้ **บริการต้องอยู่ใน LAN โรงงานเท่านั้น ห้าม port forward** ใครที่ต่อ WiFi โรงงานได้
+ยังเรียกเส้นเหล่านี้ได้ จึงควรแยก WiFi ของเครื่องหน้างานออกจาก WiFi แขก
+
+การลบรูปไม่ได้ลบไฟล์ทิ้งจริง แต่ย้ายไปไว้ที่ `<PHOTO_DIR>/_trash/<ปี-เดือน>/` และจดไว้ใน
+`data/photo-deletions.log` (หนึ่งบรรทัดต่อหนึ่งรูป บอกว่าใครลบ รายการไหน เมื่อไร)
+ถ้ามีคนลบรูปหลักฐานผิด ให้ย้ายไฟล์กลับไปโฟลเดอร์เดือนเดิมแล้วเพิ่มรายการกลับเข้า `photos.json`

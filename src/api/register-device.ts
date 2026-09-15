@@ -22,3 +22,22 @@ export async function registerDeviceToken(token: string, userName: string | null
     // เงียบไว้ตามเหตุผลด้านบน
   }
 }
+
+/**
+ * ขอให้บริการแจ้งเตือนเลิกส่งมาที่เครื่องนี้ ใช้ตอนออกจากระบบ
+ * @returns true เมื่อ server รับทราบแล้ว ผู้เรียกจะได้รู้ว่าต้องลองใหม่ภายหลังหรือไม่
+ */
+export async function unregisterDeviceToken(token: string): Promise<boolean> {
+  if (!PUSH_TOKEN_REGISTRATION_ENABLED) return false;
+
+  try {
+    const res = await fetchWithTimeout(`${NOTIFY_SERVER_URL}${ENDPOINTS.unregisterPushToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

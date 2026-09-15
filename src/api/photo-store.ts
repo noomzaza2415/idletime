@@ -155,10 +155,19 @@ export async function uploadRecordPhotos(
   return saved.map(toAbsolute);
 }
 
-export async function deleteRecordPhoto(recordId: string, fileName: string): Promise<void> {
+/** ส่งชื่อผู้ลบไปด้วย server จดไว้ให้ตามได้ว่าใครลบรูปหลักฐานไป */
+export async function deleteRecordPhoto(
+  recordId: string,
+  fileName: string,
+  userName?: string | null
+): Promise<void> {
   const res = await fetchWithTimeout(
     `${PHOTO_BASE}/${encodeURIComponent(recordId)}/${encodeURIComponent(fileName)}`,
-    { method: 'DELETE' }
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: userName ?? null }),
+    }
   );
   await readResult<string>(res);
 }

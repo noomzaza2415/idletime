@@ -27,6 +27,15 @@ const IDLE_RECORDS_PATH =
 /** ความถี่ในการถามหารายการใหม่ ตั้ง 0 เพื่อปิด watcher แล้วยิงผ่าน /Notify เอง */
 const WATCH_INTERVAL_MS = Number(process.env.WATCH_INTERVAL_MS ?? 60_000);
 
+/** รายการที่ watcher เคยเห็นแล้ว เก็บลงไฟล์เพื่อไม่ให้ restart กลางกะแล้วพลาดรายการที่เข้ามาช่วงดับ */
+const WATCH_STATE_FILE = process.env.WATCH_STATE_FILE ?? './data/watcher-state.json';
+
+/**
+ * ดึงไม่สำเร็จนานเกินเท่านี้ให้ /health ตอบ 503
+ * ตั้งไว้ 5 นาทีหรือ 3 รอบ poll แล้วแต่ค่าไหนมากกว่า API สะดุดรอบสองรอบจะได้ไม่ฟ้องมั่ว
+ */
+const WATCH_STALE_MS = Math.max(5 * 60_000, WATCH_INTERVAL_MS * 3);
+
 /**
  * อ่าน token จาก Firestore ด้วย นอกเหนือจากไฟล์ในเครื่อง
  * เปิดไว้เพื่อให้มือถือที่อยู่นอกวง LAN ลงทะเบียนเองได้ผ่าน Firestore
@@ -37,8 +46,8 @@ const USE_FIRESTORE = (process.env.USE_FIRESTORE ?? 'true') !== 'false';
 /**
  * กุญแจสำหรับให้ระบบอื่นเรียก /notify ได้
  *
- * บริการนี้ออกแบบให้เปิดสู่อินเทอร์เน็ตเพื่อให้มือถือนอกโรงงานลงทะเบียนได้
- * ถ้าไม่มีกุญแจ ใครก็ยิงแจ้งเตือนเข้าเครื่องพนักงานทุกเครื่องได้ จึงบังคับให้ตั้งเสมอ
+ * บริการนี้ใช้เฉพาะใน LAN โรงงาน แต่ใครที่ต่อ WiFi โรงงานได้ก็เรียกได้
+ * ถ้าไม่มีกุญแจ คนเหล่านั้นยิงแจ้งเตือนปลอมเข้าเครื่องลีดเดอร์ทุกเครื่องได้ จึงบังคับให้ตั้งเสมอ
  */
 const API_KEY = process.env.NOTIFY_API_KEY;
 if (!API_KEY) {
@@ -47,6 +56,9 @@ if (!API_KEY) {
 }
 
 const store = new TokenStore(DATA_FILE);
+
+/** @type {IdleTimeWatcher | null} */
+let watcher = null;
 const photos = new PhotoStore(PHOTO_DIR, PHOTO_INDEX);
 
 let fcm;
@@ -75,19 +87,36 @@ function requireApiKey(req, res, next) {
   next();
 }
 
-app.get('/health', async (_req, res) => {
+/**
+ * สถานะบริการ ใช้ทั้ง healthcheck ของ docker และให้คนเปิดดู
+ *
+ * ตอบ 503 เมื่อ watcher ดึงข้อมูลไม่สำเร็จนานเกินไป เพราะบริการที่ยังรันอยู่
+ * แต่ไม่ได้เฝ้าอะไรเลยคืออาการที่ต้องมีคนรู้ ไม่ใช่แค่ process ยังไม่ตาย
+ *
+ * อ่าน Firestore เฉพาะเมื่อขอ ?detail=1 เพราะนับเอกสารทั้ง collection คิดค่าอ่านทุกครั้ง
+ * และ healthcheck เรียกทุก 30 วินาที
+ */
+app.get('/health', async (req, res) => {
   const local = store.stats();
+  const watch = watcher ? watcher.status(WATCH_STALE_MS) : null;
+  const healthy = !watch || watch.healthy;
   let remote = null;
-  if (firestore) {
+  if (firestore && req.query.detail === '1') {
     try {
       remote = await firestore.stats();
     } catch (err) {
       remote = { error: err.message };
     }
   }
-  res.json({
-    isSuccess: true,
-    result: { status: 'ok', local, firestore: remote, photos: photos.stats() },
+  res.status(healthy ? 200 : 503).json({
+    isSuccess: healthy,
+    result: {
+      status: healthy ? 'ok' : 'watcher-stale',
+      watcher: watch,
+      local,
+      firestore: remote,
+      photos: photos.stats(),
+    },
   });
 });
 
@@ -111,6 +140,27 @@ app.post('/api/v1/Notification/RegisterDevice', (req, res) => {
   console.log(`ลงทะเบียนเครื่อง (${outcome}) platform=${platform} user=${userName ?? '-'}`);
 
   res.json({ isSuccess: true, result: outcome });
+});
+
+/**
+ * แอปเรียกตอนออกจากระบบ เพื่อเลิกส่งแจ้งเตือนมาเครื่องนั้น
+ *
+ * ต้องรู้ token ของเครื่องจึงจะปิดได้ ซึ่งมีแต่ตัวเครื่องเองที่รู้ จึงไม่ต้องใช้ API key
+ * ไม่ลบแถวทิ้ง ล็อกอินใหม่แล้ว RegisterDevice จะเปิดกลับมาที่แถวเดิม
+ */
+app.post('/api/v1/Notification/UnregisterDevice', (req, res) => {
+  const { token } = req.body ?? {};
+
+  if (typeof token !== 'string' || token.length < 20) {
+    return res
+      .status(400)
+      .json({ isSuccess: false, errorMessages: ['token ไม่ถูกต้อง'] });
+  }
+
+  const changed = store.deactivate([token]);
+  console.log(`ยกเลิกเครื่อง (${changed > 0 ? 'deactivated' : 'not-found'})`);
+
+  res.json({ isSuccess: true, result: changed });
 });
 
 /**
@@ -270,15 +320,17 @@ app.listen(PORT, '0.0.0.0', () => {
     return;
   }
 
-  new IdleTimeWatcher({
+  watcher = new IdleTimeWatcher({
     apiBaseUrl: IDLE_API_URL,
     recordsPath: IDLE_RECORDS_PATH,
     intervalMs: WATCH_INTERVAL_MS,
+    stateFile: WATCH_STATE_FILE,
     onNewRecords: (records, target) => {
       const { title, body } = describeRecords(records);
       void sendOnce(title, body, target).catch((err) =>
         console.error('ยิงแจ้งเตือนอัตโนมัติไม่สำเร็จ:', err.message)
       );
     },
-  }).start();
+  });
+  watcher.start();
 });

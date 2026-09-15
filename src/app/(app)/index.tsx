@@ -12,6 +12,7 @@ import {
 
 import { fetchRecords } from '@/api/idle-time-service';
 import { addDays, getShiftDateString, shiftTimeOrder } from '@/api/idle-rules';
+import { readPendingPhoto } from '@/api/record-draft';
 import LineTabs from '@/components/line-tabs';
 import MonthCalendar from '@/components/month-calendar';
 import NewDataBanner from '@/components/new-data-banner';
@@ -74,6 +75,20 @@ export default function DashboardScreen() {
   }, [selectedLine, shiftDate]);
 
   const { userName } = useAuth();
+
+  /**
+   * แอปถูก Android ปิดไประหว่างถ่ายรูปในหน้ากรอกสาเหตุ พอเปิดใหม่จะเริ่มที่หน้านี้
+   * พากลับไปหน้ารายการเดิมให้เอง ร่างที่กรอกและรูปที่ถ่ายไว้จะถูกกู้คืนที่นั่น
+   * ไม่งั้นลีดเดอร์ต้องจำเองว่าค้างรายการไหน ส่วนใหญ่จะไม่รู้ว่ามีของค้างอยู่
+   */
+  useEffect(() => {
+    void readPendingPhoto().then((target) => {
+      if (target) {
+        router.push({ pathname: '/record/[id]', params: { id: target.id, date: target.date } });
+      }
+    });
+    // ทำครั้งเดียวตอนเปิดแอป
+  }, []);
 
   /** ดึงรายการล่าสุดของกะที่ดูอยู่ ให้ hook เอาไปเทียบหาว่ามีอะไรใหม่ */
   const fetchLatest = useCallback(

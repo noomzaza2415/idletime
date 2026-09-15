@@ -45,6 +45,10 @@ export function useNewRecordAlert({ fetchLatest, userName, enabled, buildMessage
 
   // ขอสิทธิ์และส่ง push token ให้ backend ครั้งเดียวตอนเข้าใช้งาน
   useEffect(() => {
+    // userName เป็น null ได้แค่ช่วงกำลังออกจากระบบ ซึ่งหน้าจอยังไม่ถูกถอดออก
+    // ถ้าลงทะเบียนรอบนี้จะเปิดแจ้งเตือนกลับมาทับการปิดตอน logout พอดี
+    if (!userName) return;
+
     let cancelled = false;
     (async () => {
       const token = await registerForPushNotifications();
