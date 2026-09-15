@@ -16,6 +16,7 @@ import {
   getShiftWindow,
   MIN_VISIBLE_MINS,
 } from '@/api/idle-rules';
+import { buildLineTimeline, type LineTimeline } from '@/api/line-timeline';
 import { MOCK_RECORDS } from '@/api/mock-data';
 import type {
   ApiEnvelope,
@@ -56,10 +57,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 // ---------- โหลดข้อมูลของกะ + คัดกรองตามกติกาเดียวกับเว็บ ----------
 
-async function loadShift(
-  dateString: string,
-  cdEquip: string
-): Promise<ApiIdleTimeRecord[]> {
+/** ข้อมูลดิบทั้งกะก่อนกรอง ใช้ร่วมกันระหว่างรายการที่ต้องกรอกสาเหตุกับแถบสถานะไลน์ */
+async function requestShift(dateString: string, cdEquip: string): Promise<ApiIdleTimeRecord[]> {
   const { start: shiftStart, end: shiftEnd } = getShiftWindow(dateString);
 
   const qs = new URLSearchParams({
@@ -68,7 +67,18 @@ async function loadShift(
     cdEquip,
   }).toString();
 
-  const raw = (await request<ApiIdleTimeRecord[]>(`${ENDPOINTS.records}?${qs}`)) ?? [];
+  return (await request<ApiIdleTimeRecord[]>(`${ENDPOINTS.records}?${qs}`)) ?? [];
+}
+
+async function loadShift(
+  dateString: string,
+  cdEquip: string
+): Promise<ApiIdleTimeRecord[]> {
+  return selectVisible(await requestShift(dateString, cdEquip), dateString);
+}
+
+function selectVisible(raw: ApiIdleTimeRecord[], dateString: string): ApiIdleTimeRecord[] {
+  const { start: shiftStart, end: shiftEnd } = getShiftWindow(dateString);
   if (raw.length === 0) return [];
 
   // อยู่ในกะ หยุดนานพอที่จะต้องกรอกสาเหตุ และไม่ใช่ช่วงพักที่ถูกซ่อนตามกติกา
@@ -234,6 +244,35 @@ export async function fetchRecords(params: {
   if (!params.date) return [];
   const records = await loadShift(params.date, toCdEquip(params.line));
   return records.map(toIdleTimeRecord);
+}
+
+/**
+ * รายการที่ต้องกรอกสาเหตุ พร้อมแถบสถานะของไลน์ที่เลือก จาก request เดียว
+ *
+ * หน้ารายการเรียกทุกรอบ poll อยู่แล้ว ถ้าแยก request ของแถบสถานะออกไป
+ * จะยิงเพิ่มเป็นสองเท่าบน wifi โรงงานโดยได้ข้อมูลชุดเดียวกัน
+ *
+ * timeline เป็น null เมื่อเลือกทุกไลน์ (แถบนี้แสดงได้ทีละไลน์) หรือใช้ข้อมูลจำลอง
+ */
+export async function fetchShiftData(params: {
+  line?: string;
+  date?: string;
+}): Promise<{ records: IdleTimeRecord[]; timeline: LineTimeline | null }> {
+  if (USE_MOCK_DATA || !params.date) {
+    return { records: await fetchRecords(params), timeline: null };
+  }
+
+  const cdEquip = toCdEquip(params.line);
+  const raw = await requestShift(params.date, cdEquip);
+  const records = selectVisible(raw, params.date).map(toIdleTimeRecord);
+  const timeline =
+    cdEquip === 'ALL'
+      ? null
+      : buildLineTimeline(
+          raw.filter((item) => item.lineName === params.line),
+          params.date
+        );
+  return { records, timeline };
 }
 
 /** field ที่หน้ากรอกสาเหตุแก้ได้ — field อื่นเป็นของเครื่องจักรหรือเว็บ แอปห้ามแตะ */

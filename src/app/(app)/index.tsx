@@ -10,9 +10,12 @@ import {
   View,
 } from 'react-native';
 
-import { fetchRecords } from '@/api/idle-time-service';
+import { fetchShiftData } from '@/api/idle-time-service';
 import { addDays, getShiftDateString, shiftTimeOrder } from '@/api/idle-rules';
+import type { LineTimeline } from '@/api/line-timeline';
 import { readPendingPhoto } from '@/api/record-draft';
+import LineStatusFullscreen from '@/components/line-status-fullscreen';
+import LineStatusTimeline from '@/components/line-status-timeline';
 import LineTabs from '@/components/line-tabs';
 import MonthCalendar from '@/components/month-calendar';
 import NewDataBanner from '@/components/new-data-banner';
@@ -54,6 +57,14 @@ export default function DashboardScreen() {
   const [selectedLine, setSelectedLine] = useState(LINES[0]);
   const [search, setSearch] = useState('');
   const [records, setRecords] = useState<IdleTimeRecord[]>([]);
+  /**
+   * แถบสถานะไลน์ ผูก key ของไลน์และวันที่ไว้ด้วย
+   * ตอนสลับไลน์หรือวัน ข้อมูลใหม่ยังโหลดไม่เสร็จ ห้ามแสดงแถบของไลน์เดิมค้างไว้ใต้ชื่อไลน์ใหม่
+   */
+  const [timeline, setTimeline] = useState<{ key: string; data: LineTimeline } | null>(null);
+  const timelineKey = `${selectedLine}|${shiftDate}`;
+  /** เปิดแถบสถานะแบบเต็มจอแนวนอน */
+  const [timelineFullscreen, setTimelineFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,11 +79,21 @@ export default function DashboardScreen() {
     [router, shiftDate]
   );
 
-  const load = useCallback(async () => {
-    const fresh = await fetchRecords({ line: selectedLine, date: shiftDate });
-    setRecords(fresh);
+  /** ดึงข้อมูลกะครั้งเดียว ได้ทั้งรายการที่ต้องกรอกสาเหตุและแถบสถานะไลน์ */
+  const fetchShift = useCallback(async () => {
+    const { records: fresh, timeline: line } = await fetchShiftData({
+      line: selectedLine,
+      date: shiftDate,
+    });
+    setTimeline(line ? { key: `${selectedLine}|${shiftDate}`, data: line } : null);
     return fresh;
   }, [selectedLine, shiftDate]);
+
+  const load = useCallback(async () => {
+    const fresh = await fetchShift();
+    setRecords(fresh);
+    return fresh;
+  }, [fetchShift]);
 
   const { userName } = useAuth();
 
@@ -90,11 +111,11 @@ export default function DashboardScreen() {
     // ทำครั้งเดียวตอนเปิดแอป
   }, []);
 
-  /** ดึงรายการล่าสุดของกะที่ดูอยู่ ให้ hook เอาไปเทียบหาว่ามีอะไรใหม่ */
-  const fetchLatest = useCallback(
-    () => fetchRecords({ line: selectedLine, date: shiftDate }),
-    [selectedLine, shiftDate]
-  );
+  /**
+   * ดึงรายการล่าสุดของกะที่ดูอยู่ ให้ hook เอาไปเทียบหาว่ามีอะไรใหม่
+   * แถบสถานะไลน์อัปเดตไปในรอบเดียวกัน การหยุดสั้นที่ไม่ขึ้นในรายการจึงยังโผล่บนแถบ
+   */
+  const fetchLatest = fetchShift;
 
   const buildMessage = useCallback(
     (count: number) => ({
@@ -268,6 +289,25 @@ export default function DashboardScreen() {
           void onRefresh();
         }}
       />
+
+      {timeline?.key === timelineKey && (
+        <>
+          <LineStatusTimeline
+            timeline={timeline.data}
+            line={selectedLine}
+            isToday={isToday}
+            onPress={() => setTimelineFullscreen(true)}
+          />
+          {/* ข้อมูลยังอัปเดตตามรอบ poll ระหว่างเปิดเต็มจอ เพราะรับ timeline ชุดเดียวกับการ์ด */}
+          <LineStatusFullscreen
+            visible={timelineFullscreen}
+            onClose={() => setTimelineFullscreen(false)}
+            timeline={timeline.data}
+            line={selectedLine}
+            isToday={isToday}
+          />
+        </>
+      )}
 
       <LineTabs lines={LINES} selected={selectedLine} onSelect={setSelectedLine} />
 
