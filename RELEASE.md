@@ -58,5 +58,13 @@ SHA1 นี้ใช้จำกัด Firebase API key ใน Google Cloud Cons
 1. `USE_MOCK_AUTH` และ `USE_MOCK_DATA` ใน [src/api/config.ts](src/api/config.ts) ต้องเป็น `false`
    (release build จะล้มตั้งแต่เปิดแอปถ้าลืม)
 2. รัน test ของกติกาช่วงพักและ notify-server: `cd notify-server && npm test`
-3. `cd android && ./gradlew assembleRelease`
-4. เครื่องที่เคยติดตั้ง APK ที่ sign ด้วย debug.keystore ต้องถอนแอปก่อนหนึ่งครั้ง
+3. ขึ้นเลขใน `app.json`: `version` (เช่น 1.1.0 → 1.2.0) และ `android.versionCode` +1 ทุกครั้ง
+   แล้วรัน `npx expo prebuild --platform android` ให้เลขลงไปที่ `android/app/build.gradle`
+   (Android ไม่ยอมติดตั้งทับถ้า versionCode ต่ำกว่าตัวที่อยู่ในเครื่อง และใช้เลขนี้บอกว่าเครื่องไหนลงรุ่นไหน)
+4. `cd android && ./gradlew assembleRelease` → ได้ไฟล์ `android/app/build/outputs/apk/release/app-release.apk`
+5. เครื่องที่เคยติดตั้ง APK ที่ sign ด้วย debug.keystore ต้องถอนแอปก่อนหนึ่งครั้ง
+
+| รุ่น | versionCode | วันที่ | หมายเหตุ |
+| --- | --- | --- | --- |
+| 1.0.0 | 1 | — | รุ่นแรกที่แจก |
+| 1.1.0 | 2 | 2026-10-22 | error อ่านง่าย + ปุ่มคัดลอก (expo-clipboard), หน้ากรอกแบบใหม่, ภาษาไทยเป็นค่าเริ่มต้น, Expo SDK 57 ล่าสุด |

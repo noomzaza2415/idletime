@@ -25,6 +25,13 @@ Format:
 - **Dev loop**: ระหว่างพัฒนาใช้ Metro + debug build, build release เฉพาะตอนแจก APK — `RELEASE.md`
 - **Error messages**: ชั้น network/service โยน `AppError` (รหัส + endpoint + ข้อความ server) หน้าจอแสดงผ่าน `showErrorAlert(title, e, t)` (มีปุ่มคัดลอก) หรือ `describeError(e, t)` เท่านั้น ห้ามแสดง `e.message` ดิบ — `src/api/app-error.ts`, `src/components/error-alert.ts`
 
+## 2026-10-22 — Release 1.1.0
+
+- Change: ขึ้นเวอร์ชัน 1.1.0 (android versionCode 2, ios buildNumber 2); `npx expo install --fix` อัปเดตแพ็กเกจ Expo ให้ตรง SDK 57 (รุ่นย่อยเท่านั้น RN ไม่เปลี่ยน) และเพิ่ม config plugin `expo-image`, `expo-web-browser` ใน app.json
+- Files: `app.json`, `package.json`, `package-lock.json`, `RELEASE.md`
+- Reason: แจก APK รอบใหม่ที่มีงานทั้งหมดของวันนี้
+- Do-not-revert: `runtimeVersion` ใช้ policy `appVersion` — OTA update ที่ publish ให้ 1.0.0 จะไม่ลงเครื่อง 1.1.0 (ตั้งใจ เพราะมี native module ใหม่)
+
 ## 2026-10-22 — Error Messages
 
 - Change: เพิ่ม `AppError` + `describeError` แสดง error เป็น "เนื่องจาก <สาเหตุ> / <ต้องทำอะไร> / ข้อมูลสำหรับแจ้ง IT (รหัส, ปลายทาง, ข้อความ server, เวลา)" ใช้ทุกจุด: โหลดรายการ, โหลดรายการเดียว, บันทึก, ลบรูป, เข้าสู่ระบบ

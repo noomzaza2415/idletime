@@ -2,14 +2,14 @@
   "expo": {
     "name": "idletime",
     "slug": "idletime",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "idletime",
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.noomzaza.idletime",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "supportsTablet": false,
       "runtimeVersion": {
         "policy": "appVersion"
@@ -34,6 +34,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.noomzaza.idletime",
+      "versionCode": 2,
       "googleServicesFile": "./google-services.json",
       "runtimeVersion": {
         "policy": "appVersion"
@@ -74,7 +75,9 @@
           "cameraPermission": "ให้ Idle Time Tracker ใช้กล้อง เพื่อถ่ายรูปจุดที่ไลน์หยุด",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
