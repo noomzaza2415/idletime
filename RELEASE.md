@@ -62,6 +62,8 @@ SHA1 นี้ใช้จำกัด Firebase API key ใน Google Cloud Cons
    แล้วรัน `npx expo prebuild --platform android` ให้เลขลงไปที่ `android/app/build.gradle`
    (Android ไม่ยอมติดตั้งทับถ้า versionCode ต่ำกว่าตัวที่อยู่ในเครื่อง และใช้เลขนี้บอกว่าเครื่องไหนลงรุ่นไหน)
 4. `cd android && ./gradlew assembleRelease` → ได้ไฟล์ `android/app/build/outputs/apk/release/app-release.apk`
+   แล้วคัดลอกออกมาที่ root ของโปรเจกต์เป็น `idletime-<version>.apk` (เช่น `idletime-1.1.0.apk`) ก่อนส่งเข้ามือถือ
+   ชื่อไฟล์ต้องมีเลขเวอร์ชัน เคยส่ง `idletime-release.apk` รุ่นเก่าเข้าเครื่องแทนรุ่นใหม่เพราะชื่อเหมือนกันทุกรุ่น
 5. เครื่องที่เคยติดตั้ง APK ที่ sign ด้วย debug.keystore ต้องถอนแอปก่อนหนึ่งครั้ง
 
 | รุ่น | versionCode | วันที่ | หมายเหตุ |
