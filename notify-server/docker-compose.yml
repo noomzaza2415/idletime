@@ -26,6 +26,8 @@ services:
       - ./data:/app/data
       # กุญแจ Firebase ผูกเข้าไปแบบอ่านอย่างเดียว ไม่ฝังลงใน image
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+      # กุญแจ APNs สำหรับส่งแจ้งเตือนเข้า iPhone (AuthKey.p8) ไม่มีไฟล์ก็เริ่มบริการได้ Android ใช้ได้ตามปกติ
+      - ./apns:/app/apns:ro
 
     # จำกัด log ไม่ให้กินดิสก์จนเต็มเมื่อรันยาว ๆ เป็นเดือน
     logging:

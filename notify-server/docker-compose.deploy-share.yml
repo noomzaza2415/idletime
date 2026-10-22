@@ -31,6 +31,8 @@ services:
       # ไฟล์รูปจริงไปอยู่บนเครื่อง 188 ผ่านโฟลเดอร์แชร์
       - photos:/app/photos
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+      # กุญแจ APNs สำหรับส่งแจ้งเตือนเข้า iPhone (AuthKey.p8) ไม่มีไฟล์ก็เริ่มบริการได้ Android ใช้ได้ตามปกติ
+      - ./apns:/app/apns:ro
 
     logging:
       driver: json-file

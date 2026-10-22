@@ -36,9 +36,9 @@ const BREAK_RULES = [
  * ต้องตรงกับ MIN_VISIBLE_MINS ในแอป (src/api/idle-rules.ts) เสมอ ไม่งั้นจะเตือน
  * รายการที่พนักงานเปิดแอปมาแล้วหาไม่เจอ เพราะแอปกรองทิ้งไปแล้ว
  *
- * เทียบแบบ "ไม่เกิน" คือ 2.00 นาทีพอดีก็ไม่เตือน ต้องมากกว่านี้เท่านั้น
+ * เทียบแบบ "ไม่เกิน" คือ 1.00 นาทีพอดีก็ไม่เตือน ต้องมากกว่านี้เท่านั้น
  */
-export const MIN_NOTIFY_MINS = 2;
+export const MIN_NOTIFY_MINS = 1;
 
 export function getBreakRuleType(isoDateTime, durationMins) {
   if (!isoDateTime || !durationMins) return null;

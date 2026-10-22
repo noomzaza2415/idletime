@@ -13,8 +13,11 @@ import { TRANSLATIONS, type Language, type TranslationKey } from '@/constants/i1
 
 const STORAGE_KEY = 'language';
 
-/** อังกฤษเป็นค่าเริ่มต้น ผู้ใช้สลับเป็นไทยเองได้และจำค่าไว้ */
-const DEFAULT_LANGUAGE: Language = 'en';
+/**
+ * ไทยเป็นค่าเริ่มต้น เพราะพนักงานส่วนใหญ่เป็นคนไทย
+ * ผู้ใช้สลับเป็นอังกฤษเองได้และจำค่าไว้ เครื่องที่เคยเลือกภาษาไว้แล้วจะใช้ค่าเดิม
+ */
+const DEFAULT_LANGUAGE: Language = 'th';
 
 interface LanguageState {
   language: Language;

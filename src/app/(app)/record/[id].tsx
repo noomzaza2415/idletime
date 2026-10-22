@@ -12,10 +12,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  computeLabourCost,
   diffEditable,
   fetchRecordById,
   RecordConflictError,
@@ -31,23 +32,35 @@ import {
   readPendingPhoto,
   saveDraft,
 } from '@/api/record-draft';
-import {
-  deleteRecordPhoto,
-  getRecordPhotos,
-  uploadRecordPhotos,
-  type PickedPhoto,
-  type RecordPhoto,
-} from '@/api/photo-store';
+import type { QueuedPhoto } from '@/api/photo-queue';
+import type { PickedPhoto, RecordPhoto } from '@/api/photo-store';
+import { showErrorAlert } from '@/components/error-alert';
+import MachineStatusBadge from '@/components/machine-status-badge';
 import PhotoUploadCard from '@/components/photo-upload-card';
 import type { TranslationKey } from '@/constants/i18n';
 import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useColors } from '@/context/theme-context';
-import { BREAK_TIME_VALUE, DEPT_OPTIONS, TYPE_OPTIONS, type IdleTimeRecord } from '@/types';
+import { useRecordPhotos } from '@/hooks/use-record-photos';
+import {
+  BREAK_TIME_VALUE,
+  DEPT_OPTIONS,
+  JUDGE_OPTIONS,
+  TYPE_OPTIONS,
+  VENDOR_OPTIONS,
+  type IdleTimeRecord,
+} from '@/types';
 
-/** เพดานรูปต่อรายการ ต้องตรงกับ MAX_PHOTOS_PER_RECORD ฝั่ง notify-server */
-const MAX_PHOTOS = 20;
+/**
+ * เพดานรูปต่อรายการ ต้องตรงกับ MAX_PHOTOS_PER_RECORD ฝั่ง notify-server
+ * (เทสต์ idle-rules-sync.test.js ฟ้องถ้าไม่ตรง)
+ * กำหนด 2 รูปตามที่หน้างานใช้จริง คือรูปจุดที่หยุดกับรูปหลังแก้ไข
+ */
+const MAX_PHOTOS = 2;
+
+/** ความสูงแถบปุ่มบันทึกด้านล่าง (ปุ่ม + ระยะบนล่าง) ไม่รวมแถบ gesture */
+const FOOTER_HEIGHT = controlHeight + spacing.md * 2;
 
 /** ส่งขนาดภาพไปด้วย ตัวอัปโหลดจะได้รู้ว่าต้องย่อด้านกว้างหรือด้านสูง */
 function toPicked(asset: ImagePicker.ImagePickerAsset): PickedPhoto {
@@ -62,12 +75,33 @@ const FIELD_LABEL: Record<EditableKey, TranslationKey> = {
   dj: 'waitDJ',
   manPower: 'manPowerLabel',
   type: 'typeLabel',
+  judge: 'judgeLabel',
+  reason: 'reasonLabel',
   dept: 'deptLabel',
   remark: 'remarkLabel',
 };
 
 /** ช่องที่อยู่ในส่วน "ข้อมูลเพิ่มเติม" ต้องกางออกให้เห็นเมื่อมีการแก้ชน */
-const MORE_KEYS: EditableKey[] = ['vendor', 'dj', 'manPower', 'type', 'dept', 'remark'];
+const MORE_KEYS: EditableKey[] = [
+  'vendor',
+  'dj',
+  'manPower',
+  'type',
+  'judge',
+  'reason',
+  'dept',
+  'remark',
+];
+
+/**
+ * ตัวเลือกของ Picker พร้อมค่าปัจจุบันเสมอ
+ *
+ * ค่าที่เว็บหรือข้อมูลเก่าบันทึกไว้อาจไม่อยู่ในรายการ เช่น ชื่อแผนกที่เลิกใช้แล้ว
+ * ถ้าไม่ใส่เพิ่ม Picker จะแสดงเป็น "-- เลือก --" ผู้ใช้จะเข้าใจว่ายังว่าง แล้วเลือกทับของเดิม
+ */
+function withCurrent(options: string[], value: string) {
+  return value && !options.includes(value) ? [value, ...options] : options;
+}
 
 export default function RecordDetailScreen() {
   // date ส่งมาจากหน้ารายการ เพื่อให้เปิดรายการของวันย้อนหลังได้ถูกกะ
@@ -89,9 +123,11 @@ export default function RecordDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const [photos, setPhotos] = useState<RecordPhoto[]>([]);
-  /** สัดส่วนการอัปโหลด 0-1 เป็น null เมื่อไม่ได้กำลังอัปโหลด */
-  const [progress, setProgress] = useState<number | null>(null);
+  /** รูปบน server รวมกับรูปที่รอส่งในเครื่อง ตัวส่งทำงานต่อได้แม้ออกจากหน้านี้ไปแล้ว */
+  const photoState = useRecordPhotos(id, userName, record?.line?.toLowerCase());
+  const { photos, queue, staging, uploading, failedCount } = photoState;
+  /** ที่ว่างเหลือของรายการนี้ นับรูปที่รอส่งด้วย ไม่งั้นเลือกเกินแล้ว server ปฏิเสธทีหลัง */
+  const remaining = Math.max(0, MAX_PHOTOS - photos.length - queue.length - staging);
   /**
    * ผู้ใช้กด "No Break" แล้ว จึงเปลี่ยนไปแสดงช่องพิมพ์แทนปุ่มสองปุ่ม
    *
@@ -103,16 +139,8 @@ export default function RecordDetailScreen() {
   useEffect(() => {
     (async () => {
       try {
-        // รูปเก็บที่ notify-server แยกจาก API หลัก เพราะ API หลักยังไม่มี field สำหรับรูป
-        // รูปโหลดไม่ขึ้นไม่ควรทำให้ทั้งหน้าล้ม จึงจับ error แยกแล้วปล่อยให้เป็นรายการว่าง
-        const [found, savedPhotos] = await Promise.all([
-          fetchRecordById(id, shiftDate),
-          getRecordPhotos(id).catch((err) => {
-            console.warn('โหลดรูปแนบไม่สำเร็จ:', err.message);
-            return [];
-          }),
-        ]);
-        setPhotos(savedPhotos);
+        // รูปแนบโหลดแยกใน useRecordPhotos ถ้ารูปโหลดไม่ขึ้น การ์ดรูปจะบอกเองพร้อมปุ่มโหลดใหม่
+        const found = await fetchRecordById(id, shiftDate);
 
         if (found) {
           // มีร่างค้างจากรอบที่แอปถูกปิดไป ใช้ค่าตั้งต้นของร่างเป็นฐานตรวจการแก้ชน
@@ -135,7 +163,7 @@ export default function RecordDetailScreen() {
           }
         }
       } catch (e) {
-        Alert.alert(t('loadRecordFailed'), e instanceof Error ? e.message : t('tryAgain'));
+        showErrorAlert(t('loadRecordFailed'), e, t);
       } finally {
         setLoading(false);
       }
@@ -155,16 +183,28 @@ export default function RecordDetailScreen() {
     return () => clearTimeout(timer);
   }, [id, record, original]);
 
+  /**
+   * เข้าคิวส่งรูป ตัดส่วนที่เกินเพดานออกก่อน พร้อมบอกผู้ใช้ว่าใช้กี่รูป
+   * ถ้าส่งเกินไป server จะปฏิเสธทีหลัง ผู้ใช้เสียเวลารอแล้วยังไม่รู้ว่ารูปไหนเข้าไม่เข้า
+   * ผลการส่งแต่ละใบแสดงบนการ์ดรูป ไม่ขึ้น Alert เพราะส่งต่อได้แม้ออกจากหน้านี้ไปแล้ว
+   */
   async function addPhotos(picked: PickedPhoto[]) {
-    setProgress(0);
-    try {
-      const saved = await uploadRecordPhotos(id, picked, userName, setProgress);
-      setPhotos((prev) => [...prev, ...saved]);
-    } catch (e) {
-      Alert.alert(t('uploadPhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
-    } finally {
-      setProgress(null);
+    const accepted = picked.slice(0, remaining);
+    if (accepted.length < picked.length) {
+      const count = String(accepted.length);
+      Alert.alert(
+        t('photoLimitTitle').replace('{count}', count),
+        t('photoLimitBody').replace('{count}', count).replace('{max}', String(MAX_PHOTOS))
+      );
     }
+    await photoState.add(accepted);
+  }
+
+  function confirmDiscard(item: QueuedPhoto) {
+    Alert.alert(t('photoDiscardTitle'), t('photoDiscardBody'), [
+      { text: t('photoDiscard'), style: 'destructive', onPress: () => photoState.discard(item.key) },
+      { text: t('cancel'), style: 'cancel' },
+    ]);
   }
 
   function confirmRemoveAll() {
@@ -174,11 +214,10 @@ export default function RecordDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            // ลบทีละใบเพราะ server ไม่มีเส้นลบทั้งชุด ทำแบบนี้ยังปลอดภัยกว่าเพิ่มเส้นลบเป็นกลุ่ม
-            for (const photo of photos) await deleteRecordPhoto(id, photo.fileName, userName);
-            setPhotos([]);
+            // ลบทีละใบเพราะ server ไม่มีเส้นลบทั้งชุด ใบที่ลบสำเร็จหายจากจอทันที
+            await photoState.removeAll();
           } catch (e) {
-            Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
+            showErrorAlert(t('deletePhotoFailed'), e, t);
           }
         },
       },
@@ -202,6 +241,7 @@ export default function RecordDetailScreen() {
   }
 
   async function takePhoto() {
+    if (remaining <= 0) return;
     const { granted } = await ImagePicker.requestCameraPermissionsAsync();
     if (!granted) {
       Alert.alert(t('cameraDenied'), t('cameraDeniedBody'));
@@ -216,6 +256,8 @@ export default function RecordDetailScreen() {
   }
 
   async function pickFromLibrary() {
+    // selectionLimit 0 ของ picker แปลว่าไม่จำกัด ต้องกันไว้ก่อนเปิด
+    if (remaining <= 0) return;
     const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!granted) {
       Alert.alert(t('libraryDenied'), t('libraryDeniedBody'));
@@ -225,17 +267,11 @@ export default function RecordDetailScreen() {
       ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsMultipleSelection: true, // เลือกทีเดียวได้หลายรูป
+        // จำกัดตั้งแต่ตอนเลือก ไม่ให้ผู้ใช้เลือกเกินที่รายการนี้ยังรับได้
+        selectionLimit: remaining,
         quality: 0.6,
       })
     );
-  }
-
-  function choosePhotoSource() {
-    Alert.alert(t('addPhotoTitle'), undefined, [
-      { text: t('takePhoto'), onPress: takePhoto },
-      { text: t('chooseFromLibrary'), onPress: pickFromLibrary },
-      { text: t('cancel'), style: 'cancel' },
-    ]);
   }
 
   function confirmRemovePhoto(photo: RecordPhoto) {
@@ -245,10 +281,9 @@ export default function RecordDetailScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteRecordPhoto(id, photo.fileName, userName);
-            setPhotos((prev) => prev.filter((p) => p.fileName !== photo.fileName));
+            await photoState.remove(photo);
           } catch (e) {
-            Alert.alert(t('deletePhotoFailed'), e instanceof Error ? e.message : t('tryAgain'));
+            showErrorAlert(t('deletePhotoFailed'), e, t);
           }
         },
       },
@@ -258,6 +293,25 @@ export default function RecordDetailScreen() {
 
   function set<K extends keyof IdleTimeRecord>(key: K, value: IdleTimeRecord[K]) {
     setRecord((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  /**
+   * รูปที่ส่งไม่สำเร็จไม่ควรขวางการบันทึกสาเหตุ ซึ่งเป็นข้อมูลหลักของรายการ
+   * แต่ต้องบอกให้รู้ว่ายังค้างอยู่ในเครื่อง ไม่งั้นลีดเดอร์จะนึกว่ารูปขึ้นครบแล้ว
+   */
+  function requestSave() {
+    if (failedCount === 0) {
+      void handleSave();
+      return;
+    }
+    Alert.alert(
+      t('photoUnsentTitle').replace('{count}', String(failedCount)),
+      t('photoUnsentBody'),
+      [
+        { text: t('saveAnyway'), onPress: () => void handleSave() },
+        { text: t('cancel'), style: 'cancel' },
+      ]
+    );
   }
 
   async function handleSave(overwrite = false) {
@@ -273,7 +327,7 @@ export default function RecordDetailScreen() {
       if (e instanceof RecordConflictError) {
         showConflict(e);
       } else {
-        Alert.alert(t('saveFailed'), e instanceof Error ? e.message : t('tryAgain'));
+        showErrorAlert(t('saveFailed'), e, t);
       }
     } finally {
       setSaving(false);
@@ -331,215 +385,352 @@ export default function RecordDetailScreen() {
    * ถ้ามีค่าอยู่แล้วต้องแสดงช่องพิมพ์ ไม่งั้นคนที่เปิดมาดูรายการเก่า
    * จะไม่เห็นสิ่งที่ตัวเองเคยกรอกไป
    */
+  /** Man Hour/Amount ที่จะถูกเก็บ คิดใหม่ทุกครั้งที่แก้ Man Power */
+  const labour = computeLabourCost(record.totalMins, record.manPower);
+
   const showBreakChoice =
     record.breakRuleType === 'SHOW_BUTTON' && !record.idleTimeIssue && !manualEntry;
 
   return (
-    // KeyboardAwareScrollView เลื่อนช่องที่กำลังพิมพ์ให้พ้นแป้นพิมพ์ให้เอง
-    // จำเป็นกับหน้านี้เพราะช่องหมายเหตุกับปุ่มบันทึกอยู่ล่างสุด แป้นพิมพ์บังพอดี
-    <KeyboardAwareScrollView
-      style={styles.container}
-      // เว้นที่เหนือแป้นพิมพ์ ไม่ให้ช่องที่พิมพ์อยู่ไปแปะติดขอบแป้นพิมพ์พอดีจนอึดอัด
-      bottomOffset={spacing.xl}
-      // กดปุ่มบันทึกได้ในทีเดียวขณะแป้นพิมพ์เปิดอยู่
-      // ค่าเริ่มต้นของ ScrollView จะกินการกดครั้งแรกไปปิดแป้นพิมพ์ ต้องกดสองครั้ง
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{
-        padding: spacing.lg,
-        // edge-to-edge บน Android SDK 57: กันปุ่มบันทึกโดนแถบ gesture ทับ
-        paddingBottom: spacing.xl + insets.bottom,
-      }}>
-      <View style={styles.infoCard}>
-        <View style={styles.titleRow}>
-          <Text style={styles.workOrder}>{record.workOrder}</Text>
-          <Text style={styles.model} numberOfLines={1}>
-            {record.modelSuffix}
-          </Text>
-        </View>
-        <View style={styles.infoRow}>
-          <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>{t('lotSizeLabel')}</Text>
-            <Text style={styles.infoValue}>{record.lotSize}</Text>
-          </View>
-          <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>{t('timeLabel')}</Text>
-            <Text style={styles.infoValue}>
-              {record.startTime} - {record.endTime}
+    <View style={styles.container}>
+      {/*
+        KeyboardAwareScrollView เลื่อนช่องที่กำลังพิมพ์ให้พ้นแป้นพิมพ์ให้เอง
+        จำเป็นกับหน้านี้เพราะช่องหมายเหตุอยู่ล่างสุด แป้นพิมพ์บังพอดี
+      */}
+      <KeyboardAwareScrollView
+        style={styles.scroll}
+        // เว้นที่เหนือแป้นพิมพ์เท่าแถบปุ่มบันทึกที่ลอยอยู่ ไม่ให้ช่องที่พิมพ์ไปอยู่ใต้ปุ่ม
+        bottomOffset={FOOTER_HEIGHT + spacing.md}
+        // แตะช่องอื่นได้ในทีเดียวขณะแป้นพิมพ์เปิดอยู่
+        // ค่าเริ่มต้นของ ScrollView จะกินการกดครั้งแรกไปปิดแป้นพิมพ์ ต้องกดสองครั้ง
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}>
+        <View style={styles.infoCard}>
+          <View style={styles.titleRow}>
+            <Text style={styles.workOrder}>{record.workOrder}</Text>
+            <Text style={styles.model} numberOfLines={1}>
+              {record.modelSuffix}
             </Text>
           </View>
-          <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>{t('totalLabel')}</Text>
-            <Text style={[styles.infoValue, styles.infoValueHighlight]}>
-              {record.totalMins.toFixed(2)} min
-            </Text>
+          <View style={styles.infoRow}>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>{t('lotSizeLabel')}</Text>
+              <Text style={styles.infoValue}>{record.lotSize}</Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>{t('timeLabel')}</Text>
+              <Text style={styles.infoValue}>
+                {record.startTime} - {record.endTime}
+              </Text>
+            </View>
+            <View style={styles.infoItem}>
+              <Text style={styles.infoLabel}>{t('totalLabel')}</Text>
+              <Text style={[styles.infoValue, styles.infoValueHighlight]}>
+                {record.totalMins.toFixed(2)} min
+              </Text>
+            </View>
           </View>
-        </View>
-      </View>
-
-      {draftRestored && <Text style={styles.draftNotice}>{t('draftRestored')}</Text>}
-
-      <PhotoUploadCard
-        photos={photos}
-        progress={progress}
-        max={MAX_PHOTOS}
-        onAdd={choosePhotoSource}
-        onRemove={confirmRemovePhoto}
-        onClearAll={confirmRemoveAll}
-        labels={{
-          title: t('uploadCardTitle'),
-          subtitle: t('uploadCardSubtitle'),
-          dropzone: t('uploadDropzone'),
-          formats: t('uploadFormats'),
-          maxSize: t('uploadMaxSize'),
-          used: t('uploadUsed'),
-          uploading: t('uploadingPhoto'),
-          complete: t('uploadComplete'),
-          uploadMore: t('uploadMore'),
-          clearAll: t('uploadClearAll'),
-        }}
-      />
-
-      <Text style={styles.fieldLabel}>{t('idleIssueLabel')}</Text>
-      {showBreakChoice ? (
-        /*
-          รายการที่คาบเกี่ยวเวลาพักแบบที่ระบบตัดสินแทนไม่ได้ ให้พนักงานเลือกเอง
-          เหมือนฝั่งเว็บ กด Break Time แล้วเติมค่าให้ทันที ไม่ต้องพิมพ์
-        */
-        <View style={styles.breakChoice}>
-          <Text style={styles.breakChoiceHint}>{t('breakChoiceQuestion')}</Text>
-          <View style={styles.breakChoiceRow}>
-            <TouchableOpacity
-              style={[styles.breakButton, styles.breakButtonPrimary]}
-              onPress={() => {
-                set('idleTimeIssue', BREAK_TIME_VALUE);
-                set('action', BREAK_TIME_VALUE);
-              }}>
-              <Text style={styles.breakButtonPrimaryText}>{t('breakTime')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.breakButton}
-              onPress={() => setManualEntry(true)}>
-              <Text style={styles.breakButtonText}>{t('noBreak')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : (
-        <>
-          <TextInput
-            style={styles.input}
-            value={record.idleTimeIssue}
-            onChangeText={(v) => set('idleTimeIssue', v)}
-            placeholder={t('idleIssuePlaceholder')}
-            placeholderTextColor={c.textSecondary}
-            multiline
-          />
-
-          {/* เปลี่ยนใจได้ เฉพาะรายการที่เข้าเงื่อนไขให้เลือกเท่านั้น */}
-          {record.breakRuleType === 'SHOW_BUTTON' && (
-            <TouchableOpacity
-              style={styles.resetChoice}
-              onPress={() => {
-                set('idleTimeIssue', '');
-                set('action', '');
-                setManualEntry(false);
-              }}>
-              <Text style={styles.resetChoiceText}>↺ {t('resetBreakChoice')}</Text>
-            </TouchableOpacity>
+          {/* จุดที่หยุดบอกลีดเดอร์ว่าต้องเดินไปดูเครื่องไหน ข้อมูลเดียวกับคอลัมน์ Stop Point บนเว็บ */}
+          {(record.stopPoint !== '' || record.status !== '') && (
+            <View style={styles.infoRow}>
+              {record.stopPoint !== '' && (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>{t('stopPointLabel')}</Text>
+                  <Text style={styles.infoValue}>{record.stopPoint}</Text>
+                </View>
+              )}
+              {record.status !== '' && (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>{t('statusLabel')}</Text>
+                  <MachineStatusBadge status={record.status} />
+                </View>
+              )}
+            </View>
           )}
-        </>
-      )}
-
-      <Text style={styles.fieldLabel}>{t('actionLabel')}</Text>
-      <TextInput
-        style={styles.input}
-        value={record.action}
-        onChangeText={(v) => set('action', v)}
-        placeholder={t('actionPlaceholder')}
-        placeholderTextColor={c.textSecondary}
-        multiline
-      />
-
-      <TouchableOpacity
-        style={styles.moreToggle}
-        onPress={() => setShowMore((v) => !v)}
-        activeOpacity={0.7}>
-        <Text style={styles.moreToggleText}>{t('moreInfo')}</Text>
-        <Text style={styles.moreToggleIcon}>{showMore ? '▲' : '▼'}</Text>
-      </TouchableOpacity>
-
-      {showMore && (
-        <View>
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{t('waitVendor')}</Text>
-            <Switch value={record.vendor} onValueChange={(v) => set('vendor', v)} />
-          </View>
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{t('waitDJ')}</Text>
-            <Switch value={record.dj} onValueChange={(v) => set('dj', v)} />
-          </View>
-
-          <Text style={styles.fieldLabel}>{t('manPowerLabel')}</Text>
-          <TextInput
-            style={styles.input}
-            value={record.manPower}
-            onChangeText={(v) => set('manPower', v)}
-            placeholder={t('manPowerPlaceholder')}
-            placeholderTextColor={c.textSecondary}
-          />
-
-          <Text style={styles.fieldLabel}>{t('typeLabel')}</Text>
-          <View style={styles.pickerWrap}>
-            <Picker
-              selectedValue={record.type}
-              onValueChange={(v) => set('type', v)}
-              dropdownIconColor={c.textSecondary}>
-              <Picker.Item label={t('selectType')} value="" />
-              {TYPE_OPTIONS.map((o) => (
-                <Picker.Item key={o} label={o} value={o} />
-              ))}
-            </Picker>
-          </View>
-
-          <Text style={styles.fieldLabel}>{t('deptLabel')}</Text>
-          <View style={styles.pickerWrap}>
-            <Picker
-              selectedValue={record.dept}
-              onValueChange={(v) => set('dept', v)}
-              dropdownIconColor={c.textSecondary}>
-              <Picker.Item label={t('selectDept')} value="" />
-              {DEPT_OPTIONS.map((o) => (
-                <Picker.Item key={o} label={o} value={o} />
-              ))}
-            </Picker>
-          </View>
-
-          <Text style={styles.fieldLabel}>{t('remarkLabel')}</Text>
-          <TextInput
-            style={styles.input}
-            value={record.remark}
-            onChangeText={(v) => set('remark', v)}
-            placeholder={t('remarkPlaceholder')}
-            placeholderTextColor={c.textSecondary}
-            multiline
-          />
         </View>
-      )}
 
-      <TouchableOpacity style={styles.saveButton} onPress={() => handleSave()} disabled={saving}>
-        {saving ? (
-          <ActivityIndicator color={c.onPrimary} />
+        {draftRestored && <Text style={styles.draftNotice}>{t('draftRestored')}</Text>}
+
+        <PhotoUploadCard
+          photos={photos}
+          status={photoState.status}
+          loadError={photoState.loadError}
+          onReload={() => void photoState.reload()}
+          queue={queue}
+          activeKey={photoState.activeKey}
+          progress={photoState.progress}
+          staging={staging}
+          max={MAX_PHOTOS}
+          onTakePhoto={takePhoto}
+          onPickLibrary={pickFromLibrary}
+          onRemove={confirmRemovePhoto}
+          onClearAll={confirmRemoveAll}
+          onRetry={photoState.retry}
+          onDiscard={confirmDiscard}
+        />
+
+        <Text style={styles.fieldLabel}>{t('idleIssueLabel')}</Text>
+        {showBreakChoice ? (
+          /*
+            รายการที่คาบเกี่ยวเวลาพักแบบที่ระบบตัดสินแทนไม่ได้ ให้พนักงานเลือกเอง
+            เหมือนฝั่งเว็บ กด Break Time แล้วเติมค่าให้ทันที ไม่ต้องพิมพ์
+          */
+          <View style={styles.breakChoice}>
+            <Text style={styles.breakChoiceHint}>{t('breakChoiceQuestion')}</Text>
+            <View style={styles.breakChoiceRow}>
+              <TouchableOpacity
+                style={[styles.breakButton, styles.breakButtonPrimary]}
+                onPress={() => {
+                  set('idleTimeIssue', BREAK_TIME_VALUE);
+                  set('action', BREAK_TIME_VALUE);
+                }}>
+                <Text style={styles.breakButtonPrimaryText}>{t('breakTime')}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.breakButton}
+                onPress={() => setManualEntry(true)}>
+                <Text style={styles.breakButtonText}>{t('noBreak')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         ) : (
-          <Text style={styles.saveButtonText}>{t('save')}</Text>
+          <>
+            <TextInput
+              style={styles.input}
+              value={record.idleTimeIssue}
+              onChangeText={(v) => set('idleTimeIssue', v)}
+              placeholder={t('idleIssuePlaceholder')}
+              placeholderTextColor={c.textSecondary}
+              multiline
+            />
+
+            {/* เปลี่ยนใจได้ เฉพาะรายการที่เข้าเงื่อนไขให้เลือกเท่านั้น */}
+            {record.breakRuleType === 'SHOW_BUTTON' && (
+              <TouchableOpacity
+                style={styles.resetChoice}
+                onPress={() => {
+                  set('idleTimeIssue', '');
+                  set('action', '');
+                  setManualEntry(false);
+                }}>
+                <Text style={styles.resetChoiceText}>↺ {t('resetBreakChoice')}</Text>
+              </TouchableOpacity>
+            )}
+          </>
         )}
-      </TouchableOpacity>
-    </KeyboardAwareScrollView>
+
+        <Text style={styles.fieldLabel}>{t('actionLabel')}</Text>
+        <TextInput
+          style={styles.input}
+          value={record.action}
+          onChangeText={(v) => set('action', v)}
+          placeholder={t('actionPlaceholder')}
+          placeholderTextColor={c.textSecondary}
+          multiline
+        />
+
+        <TouchableOpacity
+          style={styles.moreToggle}
+          onPress={() => setShowMore((v) => !v)}
+          activeOpacity={0.7}>
+          <Text style={styles.moreToggleText}>{t('moreInfo')}</Text>
+          <Text style={styles.moreToggleIcon}>{showMore ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+
+        {showMore && (
+          <View>
+            {/*
+              แบ่งเป็นสามกลุ่มตามคำถามที่พนักงานต้องตอบ: ใครรับผิดชอบ, เสียแรงงานเท่าไร, ประเมินว่าอะไร
+              ข้อมูลที่บันทึกยังเป็นชุดเดิมทุกช่อง เปลี่ยนแค่ลำดับบนจอ
+            */}
+            <Text style={styles.sectionTitle}>{t('sectionResponsible')}</Text>
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>{t('waitVendor')}</Text>
+              <Switch value={record.vendor} onValueChange={(v) => set('vendor', v)} />
+            </View>
+            <View style={styles.switchRow}>
+              <Text style={styles.switchLabel}>{t('waitDJ')}</Text>
+              <Switch value={record.dj} onValueChange={(v) => set('dj', v)} />
+            </View>
+
+            {/*
+              วาง Dept ใต้สวิตช์ Vendor ทันที เพราะเปิดสวิตช์แล้วรายการเปลี่ยนเป็นรายชื่อ vendor เหมือนเว็บ
+              ถ้าอยู่ไกลกัน พนักงานจะไม่รู้ว่าสองช่องนี้เกี่ยวกัน
+            */}
+            <Text style={styles.fieldLabel}>{t(record.vendor ? 'deptVendorLabel' : 'deptLabel')}</Text>
+            <View style={styles.pickerWrap}>
+              <Picker
+                selectedValue={record.dept}
+                onValueChange={(v) => set('dept', v)}
+                dropdownIconColor={c.textSecondary}
+                style={styles.picker}>
+                <Picker.Item label={t(record.vendor ? 'selectVendor' : 'selectDept')} value="" />
+                {withCurrent(record.vendor ? VENDOR_OPTIONS : DEPT_OPTIONS, record.dept).map((o) => (
+                  <Picker.Item key={o} label={o} value={o} />
+                ))}
+              </Picker>
+            </View>
+
+            <Text style={styles.sectionTitle}>{t('sectionLabour')}</Text>
+            <Text style={styles.fieldLabel}>{t('manPowerLabel')}</Text>
+            <TextInput
+              style={styles.input}
+              value={record.manPower}
+              // หลังบ้านเก็บเป็นจำนวนเต็ม ตัดตัวอักษรอื่นทิ้ง กันกรณีวางข้อความที่มีชื่อคนปนมา
+              onChangeText={(v) => set('manPower', v.replace(/[^0-9]/g, ''))}
+              placeholder={t('manPowerPlaceholder')}
+              placeholderTextColor={c.textSecondary}
+              // ค่านี้ใช้คำนวณ Man Hour กับ Amount เปิดแป้นตัวเลขให้เลย ลดโอกาสพิมพ์ตัวอักษรปน
+              keyboardType="number-pad"
+            />
+
+            {/* แสดงให้เห็นก่อนกดบันทึก ว่าระบบจะเก็บ Man Hour กับ Amount เป็นเท่าไร เหมือนตารางบนเว็บ */}
+            <View style={styles.labourBox}>
+              <View style={styles.labourRow}>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>{t('manHourLabel')}</Text>
+                  <Text style={styles.infoValue}>{labour.manHour}</Text>
+                </View>
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>{t('amountLabel')}</Text>
+                  <Text style={styles.infoValue}>{labour.amountThb.toFixed(2)}</Text>
+                </View>
+              </View>
+              <Text style={styles.labourHint}>{t('labourAutoHint')}</Text>
+            </View>
+
+            <Text style={styles.sectionTitle}>{t('sectionAssessment')}</Text>
+            <Text style={styles.fieldLabel}>{t('typeLabel')}</Text>
+            <View style={styles.pickerWrap}>
+              <Picker
+                selectedValue={record.type}
+                onValueChange={(v) => set('type', v)}
+                dropdownIconColor={c.textSecondary}
+                style={styles.picker}>
+                <Picker.Item label={t('selectType')} value="" />
+                {withCurrent(TYPE_OPTIONS, record.type).map((o) => (
+                  <Picker.Item key={o} label={o} value={o} />
+                ))}
+              </Picker>
+            </View>
+
+            {/*
+              Judge มีแค่สองค่า ใช้ปุ่มคู่ให้แตะครั้งเดียวจบ แทน dropdown ที่ต้องเปิดแล้วเลือกอีกที
+              แตะปุ่มที่เลือกอยู่ซ้ำ = ล้างค่า (เทียบเท่า "-- เลือก --" เดิม)
+              ค่าเก่าที่ไม่อยู่ในรายการยังขึ้นเป็นปุ่มเพิ่ม ไม่ให้หายไปเงียบ ๆ
+            */}
+            <Text style={styles.fieldLabel}>{t('judgeLabel')}</Text>
+            <View style={styles.segmentRow}>
+              {withCurrent(JUDGE_OPTIONS, record.judge).map((o) => {
+                const selected = record.judge === o;
+                const fill =
+                  o === 'Accept' ? c.statusDoneFill : o === 'Delete' ? c.statusPendingFill : c.primary;
+                return (
+                  <TouchableOpacity
+                    key={o}
+                    style={[styles.segment, selected && { backgroundColor: fill, borderColor: fill }]}
+                    onPress={() => set('judge', selected ? '' : o)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}>
+                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
+                      {selected ? '✓ ' : ''}
+                      {o}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.fieldLabel}>{t('reasonLabel')}</Text>
+            <TextInput
+              style={styles.input}
+              value={record.reason}
+              onChangeText={(v) => set('reason', v)}
+              placeholder={t('reasonPlaceholder')}
+              placeholderTextColor={c.textSecondary}
+              multiline
+            />
+
+            <Text style={styles.fieldLabel}>{t('remarkLabel')}</Text>
+            <TextInput
+              style={styles.input}
+              value={record.remark}
+              onChangeText={(v) => set('remark', v)}
+              placeholder={t('remarkPlaceholder')}
+              placeholderTextColor={c.textSecondary}
+              multiline
+            />
+          </View>
+        )}
+      </KeyboardAwareScrollView>
+
+      {/*
+        ปุ่มบันทึกติดล่างจอเสมอ ไม่ต้องเลื่อนหาหลังกางข้อมูลเพิ่มเติม
+        KeyboardStickyView ยกปุ่มขึ้นตามแป้นพิมพ์ จึงกดบันทึกได้ทันทีขณะพิมพ์อยู่
+        ตอนแป้นพิมพ์เปิดเลื่อนลงเท่าระยะแถบ gesture เพราะแป้นพิมพ์บังแถบนั้นอยู่แล้ว
+      */}
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
+        <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }]}>
+          {/*
+            ระหว่างรูปยังส่งไม่เสร็จ ห้ามบันทึก เพราะบันทึกแล้วหน้าจอปิดกลับทันที
+            ถ้ารูปล้มหลังจากนั้นผู้ใช้จะไม่เห็น และนึกว่ารูปขึ้นครบแล้ว
+          */}
+          <TouchableOpacity
+            style={[styles.saveButton, uploading && styles.saveButtonWaiting]}
+            onPress={requestSave}
+            disabled={saving || uploading}>
+            {saving ? (
+              <ActivityIndicator color={c.onPrimary} />
+            ) : uploading ? (
+              <View style={styles.saveWaitingRow}>
+                <ActivityIndicator color={c.textSecondary} />
+                <Text style={styles.saveWaitingText}>{t('photoWaitUpload')}</Text>
+              </View>
+            ) : (
+              <Text style={styles.saveButtonText}>{t('save')}</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardStickyView>
+    </View>
   );
 }
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
+  scroll: { flex: 1 },
+  footer: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    backgroundColor: c.surface,
+    borderTopWidth: 1,
+    borderTopColor: c.border,
+  },
+  /** หัวกลุ่มในข้อมูลเพิ่มเติม ตัวใหญ่กว่าชื่อช่องและมีเส้นใต้ ให้เห็นว่าเริ่มกลุ่มใหม่ */
+  sectionTitle: {
+    fontSize: font.body,
+    fontWeight: '700',
+    color: c.primary,
+    marginTop: spacing.xl,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: c.border,
+  },
+  segmentRow: { flexDirection: 'row', gap: spacing.sm },
+  segment: {
+    flex: 1,
+    minHeight: controlHeight,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    borderColor: c.border,
+    backgroundColor: c.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentText: { fontSize: font.body, fontWeight: '600', color: c.textPrimary },
+  segmentTextSelected: { color: c.onStatus, fontWeight: '700' },
   notFound: { textAlign: 'center', marginTop: spacing.xl, color: c.textSecondary },
   draftNotice: {
     marginBottom: spacing.lg,
@@ -574,6 +765,21 @@ const createStyles = (c: ThemeColors) =>
   infoLabel: { fontSize: font.small, color: c.textSecondary },
   infoValue: { fontSize: font.body, fontWeight: '700', color: c.textPrimary, marginTop: 2 },
   infoValueHighlight: { color: c.danger },
+  labourBox: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.infoBoxBorder,
+    backgroundColor: c.chipBg,
+  },
+  labourRow: { flexDirection: 'row' },
+  labourHint: {
+    fontSize: font.small,
+    color: c.textSecondary,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
   fieldLabel: {
     fontSize: font.small,
     fontWeight: '600',
@@ -581,6 +787,8 @@ const createStyles = (c: ThemeColors) =>
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
+  /** Picker บน Android ใช้ตัวอักษรสีดำเสมอถ้าไม่กำหนด โหมดมืดจึงมองไม่เห็นค่าที่เลือกไว้ */
+  picker: { color: c.textPrimary },
   pickerWrap: {
     borderWidth: 1,
     borderColor: c.border,
@@ -659,8 +867,9 @@ const createStyles = (c: ThemeColors) =>
     minHeight: controlHeight,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.xxl,
-    ...elevation.card,
   },
   saveButtonText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
+  saveButtonWaiting: { backgroundColor: c.border, shadowOpacity: 0, elevation: 0 },
+  saveWaitingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  saveWaitingText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
 });

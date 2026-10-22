@@ -78,16 +78,17 @@ function WorkOrderGroupBase({
         </View>
       </View>
 
-      <Text style={styles.model} numberOfLines={1}>
-        {modelSuffix}
-      </Text>
-
       {/*
         ช่วงเวลาของทั้งกลุ่ม คือเวลาเริ่มของรายการแรกถึงเวลาจบของรายการสุดท้าย
         ทำให้รู้ได้ทันทีว่ากลุ่มนี้เกิดช่วงไหนของกะ โดยไม่ต้องกดเปิดดูรายการย่อย
+        วางบรรทัดเดียวกับ model ให้หัวกลุ่มเตี้ยลง เหมือนการ์ดรายการ
       */}
-      <Text style={styles.timeRange}>
-        {startTime} - {endTime}
+      <Text style={styles.model} numberOfLines={1}>
+        <Text style={styles.timeRange}>
+          {startTime} - {endTime}
+        </Text>
+        {'  ·  '}
+        {modelSuffix}
       </Text>
 
       {/*
@@ -108,7 +109,9 @@ function WorkOrderGroupBase({
           {doneCount}/{count} {t('itemsCount')}
         </Text>
         <View style={styles.metaRight}>
-          <Text style={styles.totalMins}>{totalMins.toFixed(2)} min</Text>
+          <Text style={[styles.totalMins, allDone && styles.totalMinsDone]}>
+            {totalMins.toFixed(2)} min
+          </Text>
           {/* ใช้สามเหลี่ยมแบบเดียวกับปุ่ม "ข้อมูลเพิ่มเติม" ในหน้ารายละเอียด */}
           <Text style={styles.chevron}>{expanded ? '▲' : '▼'}</Text>
         </View>
@@ -123,13 +126,17 @@ export default WorkOrderGroup;
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
+    /** แถบสีซ้ายและพื้นแดงอ่อนเฉพาะกลุ่มที่ยังค้าง ตามหลักเดียวกับ RecordCard */
     group: {
       backgroundColor: c.surface,
       borderRadius: radius.md,
-      padding: spacing.lg,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
       marginHorizontal: spacing.lg,
-      marginBottom: spacing.md,
+      marginBottom: spacing.sm,
       borderWidth: 1,
+      borderColor: c.border,
+      borderLeftWidth: 6,
       ...elevation.card,
     },
     /** ตอนกางอยู่ ให้หัวข้อเชื่อมติดกับรายการย่อยด้านล่าง จึงตัดมุมล่างและระยะห่างออก */
@@ -139,8 +146,12 @@ const createStyles = (c: ThemeColors) =>
       borderBottomRightRadius: 0,
       borderBottomWidth: 0,
     },
-    groupPending: { backgroundColor: c.cardPendingBg, borderColor: c.danger },
-    groupDone: { backgroundColor: c.badgeDoneBg, borderColor: c.success },
+    groupPending: {
+      backgroundColor: c.cardPendingBg,
+      borderColor: c.danger,
+      borderLeftColor: c.statusPendingFill,
+    },
+    groupDone: { borderLeftColor: c.statusDoneFill },
     headerRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -164,9 +175,8 @@ const createStyles = (c: ThemeColors) =>
     badgeText: { fontSize: font.small, fontWeight: '700', color: c.onStatus },
     model: { fontSize: font.small, color: c.textSecondaryStrong, marginTop: spacing.xs },
     timeRange: {
-      fontSize: font.small,
-      color: c.textSecondaryStrong,
-      marginTop: spacing.xs,
+      color: c.textPrimary,
+      fontWeight: '600',
       fontVariant: ['tabular-nums'],
     },
     progressTrack: {
@@ -174,17 +184,23 @@ const createStyles = (c: ThemeColors) =>
       borderRadius: 3,
       backgroundColor: c.border,
       overflow: 'hidden',
-      marginTop: spacing.md,
+      marginTop: spacing.sm,
     },
     progressFill: { height: '100%', borderRadius: 3 },
     metaRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginTop: spacing.md,
+      marginTop: spacing.sm,
     },
-    metaText: { fontSize: font.small, color: c.textSecondaryStrong },
+    metaText: { fontSize: font.small, fontWeight: '600', color: c.textSecondaryStrong },
     metaRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    totalMins: { fontSize: font.body, fontWeight: '700', color: c.danger },
+    totalMins: {
+      fontSize: font.body,
+      fontWeight: '800',
+      color: c.danger,
+      fontVariant: ['tabular-nums'],
+    },
+    totalMinsDone: { color: c.textPrimary },
     chevron: { fontSize: font.small, color: c.primary },
   });

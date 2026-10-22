@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -330,10 +330,16 @@ export function TimelineBar({
             );
           })}
 
-          {/* เส้นแบ่งเวลาวางทับช่วงหยุด ให้กะเวลาได้โดยไม่ต้องไล่สายตาขึ้นไปดูป้าย */}
+          {/*
+            ขีดบอกเวลาสั้น ๆ ที่ขอบบนและล่างของแถบ ให้กะเวลาได้โดยไม่ต้องไล่สายตาขึ้นไปดูป้าย
+            เดิมเป็นเส้นเต็มความสูง ซึ่งดูเหมือนเหตุการณ์อีกชนิดหนึ่งเพราะทุกสีบนแถบนี้มีความหมาย
+          */}
           {d.grid &&
             ticks.slice(1).map((at) => (
-              <View key={`grid-${at}`} style={[styles.gridLine, { left: toX(at) }]} />
+              <Fragment key={`grid-${at}`}>
+                <View style={[styles.gridNotch, styles.gridNotchTop, { left: toX(at) }]} />
+                <View style={[styles.gridNotch, styles.gridNotchBottom, { left: toX(at) }]} />
+              </Fragment>
             ))}
 
           {selected && (
@@ -427,11 +433,6 @@ export default function LineStatusTimeline({ timeline, line, isToday, onPress }:
         <Text style={styles.title} numberOfLines={1}>
           {line.toUpperCase()} · {t('timelineTitle')}
         </Text>
-        {onPress && (
-          <Text style={styles.expandHint} numberOfLines={1}>
-            {t('timelineExpand')}
-          </Text>
-        )}
       </View>
       <View style={styles.legend}>
         <LegendItem color={colors.running} label={t('timelineRunning')} styles={styles} />
@@ -506,14 +507,16 @@ const createBarStyles = (c: ThemeColors, size: 'card' | 'full') => {
       overflow: 'hidden',
     },
     segment: { position: 'absolute', top: 0, bottom: 0 },
-    gridLine: {
+    gridNotch: {
       position: 'absolute',
-      top: 0,
-      bottom: 0,
-      width: 1,
-      backgroundColor: c.bg,
-      opacity: 0.6,
+      width: 2,
+      height: 8,
+      marginLeft: -1,
+      backgroundColor: c.textPrimary,
+      opacity: 0.45,
     },
+    gridNotchTop: { top: 0 },
+    gridNotchBottom: { bottom: 0 },
     /** กรอบรอบช่วงที่เลือก ใช้สีตัวอักษรหลักให้ตัดกับทั้งสีแดง เหลือง และเขียว */
     selected: {
       position: 'absolute',
@@ -559,7 +562,6 @@ const createCardStyles = (c: ThemeColors) =>
       color: c.textPrimary,
       letterSpacing: 0.5,
     },
-    expandHint: { fontSize: font.small, fontWeight: '600', color: c.primary },
     legend: {
       flexDirection: 'row',
       flexWrap: 'wrap',

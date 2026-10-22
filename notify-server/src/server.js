@@ -1,5 +1,6 @@
 import express from 'express';
 
+import { APNS_PRODUCTION_ORIGIN, APNS_SANDBOX_ORIGIN, ApnsSender, splitDevices } from './apns.js';
 import { FcmSender } from './fcm.js';
 import { FirestoreStore } from './firestore-store.js';
 import { createPhotoRouter, PHOTO_ROUTE } from './photo-routes.js';
@@ -53,6 +54,42 @@ const API_KEY = process.env.NOTIFY_API_KEY;
 if (!API_KEY) {
   console.error('ต้องตั้ง NOTIFY_API_KEY ก่อนเริ่มบริการ (ดู .env.example)');
   process.exit(1);
+}
+
+/**
+ * ส่งแจ้งเตือนเข้า iPhone ผ่าน APNs (ดู apns.js)
+ *
+ * เปิดใช้เมื่อตั้ง APNS_KEY_ID กับ APNS_TEAM_ID แล้วเท่านั้น ถ้ายังไม่ตั้งหรืออ่านไฟล์กุญแจไม่ได้
+ * บริการยังเริ่มได้ตามปกติ Android ต้องไม่หยุดเพราะฝั่ง iPhone ยังตั้งค่าไม่เสร็จ
+ *
+ * APNS_PRODUCTION ต้องตรงกับแบบ build ของแอป: Ad Hoc / TestFlight / App Store = true,
+ * development build = false ถ้าไม่ตรง Apple จะตอบ BadDeviceToken ทุกเครื่อง
+ */
+const APNS_KEY_FILE = process.env.APNS_KEY_FILE ?? './apns/AuthKey.p8';
+const APNS_KEY_ID = process.env.APNS_KEY_ID;
+const APNS_TEAM_ID = process.env.APNS_TEAM_ID;
+const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID ?? 'com.noomzaza.idletime';
+const APNS_PRODUCTION = (process.env.APNS_PRODUCTION ?? 'true') !== 'false';
+
+/** @type {ApnsSender | null} */
+let apns = null;
+if (APNS_KEY_ID && APNS_TEAM_ID) {
+  try {
+    apns = new ApnsSender({
+      keyFile: APNS_KEY_FILE,
+      keyId: APNS_KEY_ID,
+      teamId: APNS_TEAM_ID,
+      bundleId: APNS_BUNDLE_ID,
+      origin: APNS_PRODUCTION ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
+    });
+    console.log(
+      `ส่งแจ้งเตือน iPhone ผ่าน APNs (${APNS_PRODUCTION ? 'production' : 'sandbox'}) bundle=${APNS_BUNDLE_ID}`
+    );
+  } catch (err) {
+    console.error(`เปิดใช้ APNs ไม่ได้ อ่านกุญแจที่ ${APNS_KEY_FILE} ไม่สำเร็จ: ${err.message}`);
+  }
+} else {
+  console.log('ยังไม่ได้ตั้ง APNS_KEY_ID / APNS_TEAM_ID — iPhone จะยังไม่ได้รับแจ้งเตือน');
 }
 
 const store = new TokenStore(DATA_FILE);
@@ -115,6 +152,7 @@ app.get('/health', async (req, res) => {
       watcher: watch,
       local,
       firestore: remote,
+      apns: apns ? { enabled: true, production: APNS_PRODUCTION } : { enabled: false },
       photos: photos.stats(),
     },
   });
@@ -189,19 +227,39 @@ app.post('/api/v1/Notification/Notify', requireApiKey, async (req, res) => {
   }
 });
 
-/** รวม token ที่ยังใช้งานได้จากทั้งไฟล์ในเครื่องและ Firestore โดยตัดตัวซ้ำออก */
-async function collectTokens() {
-  const local = store.activeTokens();
-  if (!firestore) return local;
+/** รวมเครื่องที่ยังใช้งานได้จากทั้งไฟล์ในเครื่องและ Firestore แล้วแยกตามช่องทางส่ง */
+async function collectDevices() {
+  const local = store.activeDevices();
+  if (!firestore) return splitDevices(local);
 
   try {
-    const remote = await firestore.activeTokens();
-    // เครื่องเดียวกันอาจลงทะเบียนไว้ทั้งสองที่ Set จึงตัดซ้ำให้ ไม่งั้นจะเด้งสองครั้ง
-    return [...new Set([...local, ...remote])];
+    const remote = await firestore.activeDevices();
+    // เครื่องเดียวกันอาจลงทะเบียนไว้ทั้งสองที่ splitDevices จึงตัดซ้ำให้ ไม่งั้นจะเด้งสองครั้ง
+    return splitDevices([...local, ...remote]);
   } catch (err) {
     // Firestore ล่มไม่ควรทำให้แจ้งเตือนหยุดทั้งหมด ยังส่งให้เครื่องที่อยู่ในไฟล์ได้
     console.error('อ่าน token จาก Firestore ไม่สำเร็จ:', err.message);
-    return local;
+    return splitDevices(local);
+  }
+}
+
+/**
+ * ส่ง iPhone ผ่าน APNs แยกจาก FCM ถ้า APNs ล้มทั้งก้อน Android ยังได้รับตามปกติ
+ *
+ * ถ้ายังไม่ได้เปิดใช้ APNs จะข้าม iPhone ไปเฉย ๆ ห้ามโยนไปให้ FCM
+ * เพราะ FCM จะตอบว่า token ใช้ไม่ได้ แล้วเครื่องนั้นถูกปิดทิ้งถาวร
+ */
+async function sendToIphones(tokens, message) {
+  if (tokens.length === 0) return { sent: 0, failed: 0, deadTokens: [] };
+  if (!apns) {
+    console.log(`ข้าม iPhone ${tokens.length} เครื่อง เพราะยังไม่ได้เปิดใช้ APNs`);
+    return { sent: 0, failed: tokens.length, deadTokens: [] };
+  }
+  try {
+    return await apns.send(tokens, message);
+  } catch (err) {
+    console.error('ส่งแจ้งเตือน iPhone ไม่สำเร็จ:', err.message);
+    return { sent: 0, failed: tokens.length, deadTokens: [] };
   }
 }
 
@@ -214,10 +272,19 @@ async function collectTokens() {
  * @returns {Promise<{sent: number, failed: number, deactivated: number}>}
  */
 async function sendOnce(title, body, target) {
-  const tokens = await collectTokens();
-  if (tokens.length === 0) return { sent: 0, failed: 0, deactivated: 0 };
+  const devices = await collectDevices();
+  if (devices.fcm.length === 0 && devices.apns.length === 0) {
+    return { sent: 0, failed: 0, deactivated: 0 };
+  }
 
-  const { sent, failed, deadTokens } = await fcm.send(tokens, { title, body, target });
+  const message = { title, body, target };
+  const [android, ios] = await Promise.all([
+    fcm.send(devices.fcm, message),
+    sendToIphones(devices.apns, message),
+  ]);
+  const sent = android.sent + ios.sent;
+  const failed = android.failed + ios.failed;
+  const deadTokens = [...android.deadTokens, ...ios.deadTokens];
 
   let deactivated = store.deactivate(deadTokens);
   if (firestore && deadTokens.length > 0) {

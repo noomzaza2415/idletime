@@ -1,85 +1,72 @@
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
+import type { QueuedPhoto } from '@/api/photo-queue';
 import type { RecordPhoto } from '@/api/photo-store';
 import PhotoViewer from '@/components/photo-viewer';
-import SoftBlob from '@/components/soft-blob';
-import { font, spacing } from '@/constants/theme';
-
-/**
- * สีจากดีไซน์ต้นฉบับ (Uiverse) ตรึงไว้ไม่ผูกกับธีมของแอป
- * การ์ดนี้เป็นชุดโทนมืดฟ้าครามทั้งใบ ถ้าดึงสีจากธีมสว่างมาใช้จะเสียคาแรกเตอร์ไปหมด
- */
-const SLATE_950 = '#020617';
-const SLATE_900 = '#0f172a';
-const SLATE_800 = '#1e293b';
-const SLATE_700 = '#334155';
-const SLATE_400 = '#94a3b8';
-const CYAN = '#06b6d4';
-const SKY = '#0ea5e9';
-const EMERALD = '#10b981';
-const WHITE = '#ffffff';
-
-/** เส้นรอบวงของวงกลม r=16 ใน viewBox 36 ตรงกับ stroke-dasharray="100" ของต้นฉบับ */
-const RING_LENGTH = 100;
+import { controlHeight, font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import { useLanguage } from '@/context/language-context';
+import { useColors } from '@/context/theme-context';
+import type { PhotoListStatus } from '@/hooks/use-record-photos';
 
 interface Props {
+  /** รูปที่อยู่บน server แล้ว */
   photos: RecordPhoto[];
-  /** สัดส่วนการอัปโหลด 0-1 เป็น null เมื่อไม่ได้กำลังอัปโหลด */
-  progress: number | null;
+  status: PhotoListStatus;
+  loadError: string | null;
+  onReload: () => void;
+  /** รูปที่ยังไม่ได้ขึ้น server ทั้งที่รอส่ง กำลังส่ง และส่งไม่สำเร็จ */
+  queue: QueuedPhoto[];
+  activeKey: string | null;
+  /** ความคืบหน้าของใบที่กำลังส่ง 0-1 */
+  progress: number;
+  /** จำนวนรูปที่กำลังย่อ ยังไม่เข้าคิว */
+  staging: number;
   /** จำนวนรูปสูงสุดต่อรายการ ต้องตรงกับที่ server บังคับไว้ */
   max: number;
-  onAdd: () => void;
+  onTakePhoto: () => void;
+  onPickLibrary: () => void;
   onRemove: (photo: RecordPhoto) => void;
   onClearAll: () => void;
-  labels: {
-    title: string;
-    subtitle: string;
-    dropzone: string;
-    formats: string;
-    maxSize: string;
-    used: string;
-    uploading: string;
-    complete: string;
-    uploadMore: string;
-    clearAll: string;
-  };
+  /** ไม่ส่ง key = ส่งใหม่ทุกใบที่ล้ม */
+  onRetry: (key?: string) => void;
+  onDiscard: (item: QueuedPhoto) => void;
 }
 
-/** 1843200 -> "1.8 MB" */
-function formatSize(bytes: number) {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${Math.round(bytes / 1024)} KB`;
-}
+const GRID_COLUMNS = 3;
 
-/** "20260909_142530_1024_a1b2.jpg" -> "14:25:30" อ่านง่ายกว่าชื่อไฟล์เต็ม */
+/** "20260909_142530_1024_a1b2.jpg" -> "14:25" อ่านง่ายกว่าชื่อไฟล์เต็ม */
 function timeOfFile(fileName: string) {
-  const t = fileName.slice(9, 15);
-  return /^\d{6}$/.test(t) ? `${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}` : fileName;
+  const t = fileName.slice(9, 13);
+  return /^\d{4}$/.test(t) ? `${t.slice(0, 2)}:${t.slice(2, 4)}` : '';
 }
 
-/** ไอคอนอัปโหลดแบบก้อนเมฆ ใช้ path เดียวกับ heroicons ในดีไซน์ต้นฉบับ */
-function UploadIcon({ size, color }: { size: number; color: string }) {
+function CameraIcon({ color }: { color: string }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
       <Path
-        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+        d="M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
         stroke={color}
         strokeWidth={2}
-        strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <Circle cx={12} cy={13} r={3.5} stroke={color} strokeWidth={2} />
     </Svg>
   );
 }
 
-/** ไอคอนรูปภาพ ใช้แทนไอคอนเอกสารของต้นฉบับ เพราะที่นี่แนบได้แต่รูป */
-function PhotoIcon({ size, color }: { size: number; color: string }) {
+function GalleryIcon({ color }: { color: string }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
       <Path
         d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
         stroke={color}
@@ -91,27 +78,13 @@ function PhotoIcon({ size, color }: { size: number; color: string }) {
   );
 }
 
-function CheckIcon({ size, color }: { size: number; color: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M5 13l4 4L19 7"
-        stroke={color}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-function CloseIcon({ size, color }: { size: number; color: string }) {
+function CloseIcon({ color, size = 18 }: { color: string; size?: number }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Path
         d="M6 18L18 6M6 6l12 12"
         stroke={color}
-        strokeWidth={2}
+        strokeWidth={2.5}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -120,183 +93,247 @@ function CloseIcon({ size, color }: { size: number; color: string }) {
 }
 
 /**
- * การ์ดแนบรูปหน้างาน แปลงจากดีไซน์ Upload Files ของ Uiverse
+ * การ์ดรูปหน้างาน
  *
- * ส่วนที่ปรับให้เข้ากับงานจริง
- * - dropzone ของเว็บใช้ลากไฟล์มาวาง บนมือถือไม่มีการลากไฟล์ จึงเปลี่ยนเป็นแตะเพื่อเปิดกล้องหรือคลังภาพ
- * - แถบ Storage Used ของต้นฉบับนับพื้นที่เก็บ ที่นี่ไม่มีโควตาต่อผู้ใช้
- *   จึงเปลี่ยนไปนับจำนวนรูปต่อรายการแทน ซึ่งมีเพดานจริงที่ server บังคับไว้
- * - แถวไฟล์ของต้นฉบับโชว์ไอคอนตามชนิดไฟล์ ที่นี่โชว์รูปย่อจริงเพราะมีอยู่แล้วและอ่านง่ายกว่า
+ * ลำดับบนการ์ดเรียงตามสิ่งที่ผู้ใช้ต้องรู้ก่อน
+ * 1. โหลดรูปไม่ขึ้น บอกตรง ๆ พร้อมปุ่มลองใหม่ ไม่แสดงเป็นว่างเฉย ๆ
+ * 2. รูปที่ยังไม่ขึ้น server แสดงเป็นแถวเต็มความกว้าง ใบที่ล้มมีปุ่มส่งใหม่ขนาดใหญ่
+ * 3. รูปที่อยู่บน server แล้วเป็นตารางรูปย่อ แตะเพื่อดูเต็มจอ
+ * 4. ปุ่มถ่ายรูปกับคลังภาพวางคู่กันบนการ์ดเลย แตะครั้งเดียวถึงกล้อง
+ *    เดิมต้องแตะปุ่มก่อนแล้วเลือกจาก Alert ของ Android ซึ่งปุ่มเป็นตัวหนังสือเล็กเรียงซ้อนกัน
+ *    ใส่ถุงมือแล้วกดพลาดไปโดน "ยกเลิก" ง่าย และเสียหนึ่งขั้นตอนทุกครั้งที่ถ่าย
+ *    ส่วนปุ่มลบทั้งหมดทำเป็นข้อความเล็ก ให้กดพลาดยาก
+ *
+ * ใช้สีจากธีมทั้งหมด เดิมเป็นชุดสีมืดตายตัวของ Uiverse จึงเป็นกล่องดำกลางจอในโหมดสว่าง
  */
 export default function PhotoUploadCard({
   photos,
+  status,
+  loadError,
+  onReload,
+  queue,
+  activeKey,
   progress,
+  staging,
   max,
-  onAdd,
+  onTakePhoto,
+  onPickLibrary,
   onRemove,
   onClearAll,
-  labels,
+  onRetry,
+  onDiscard,
 }: Props) {
-  const styles = useMemo(() => createStyles(), []);
-  const ratio = Math.min(photos.length / max, 1);
-  const percent = Math.round(ratio * 100);
-  const uploading = progress !== null;
-  /** ปิดการเพิ่มรูปทั้งตอนกำลังส่งและตอนเต็มเพดานแล้ว */
-  const addDisabled = uploading || photos.length >= max;
-  /** มีรูปแล้วให้ย่อกรอบเส้นประลง เพื่อไม่ให้การ์ดกินพื้นที่จอมากเกินไป */
-  const compact = photos.length > 0;
-  /** ตำแหน่งรูปที่กำลังเปิดดูเต็มจอ เป็น null เมื่อยังไม่ได้เปิด */
+  const c = useColors();
+  const { t } = useLanguage();
+  const styles = useMemo(() => createStyles(c), [c]);
   const [viewing, setViewing] = useState<number | null>(null);
+  const [gridWidth, setGridWidth] = useState(0);
+
+  const total = photos.length + queue.length + staging;
+  const full = total >= max;
+  const failed = queue.filter((q) => q.error);
+  const tileSize =
+    gridWidth > 0 ? Math.floor((gridWidth - spacing.sm * (GRID_COLUMNS - 1)) / GRID_COLUMNS) : 0;
+
+  function statusOf(item: QueuedPhoto) {
+    if (item.error) return { text: t('photoFailed'), color: c.danger };
+    if (item.key === activeKey) {
+      // ส่งครบทุก byte แล้วแต่ server ยังไม่ตอบ ถ้าค้างที่ 100% ผู้ใช้จะนึกว่าแอปค้าง
+      return progress >= 1
+        ? { text: t('photoSaving'), color: c.primary }
+        : {
+            text: t('photoUploading').replace('{percent}', String(Math.round(progress * 100))),
+            color: c.primary,
+          };
+    }
+    return { text: t('photoWaiting'), color: c.textSecondary };
+  }
 
   return (
     <View style={styles.card}>
-      {/* ก้อนแสงมุมบนซ้ายและล่างขวา ต้นฉบับใช้ blur-2xl ที่ RN ไม่มี จึงซ้อนวงจางแทน */}
-      <View style={styles.blobTop} pointerEvents="none">
-        <SoftBlob color={CYAN} size={200} intensity={0.7} />
-      </View>
-      <View style={styles.blobBottom} pointerEvents="none">
-        <SoftBlob color={SKY} size={200} intensity={0.7} />
-      </View>
-
       <View style={styles.header}>
         <View style={styles.headerText}>
-          <Text style={styles.title}>{labels.title}</Text>
-          <Text style={styles.subtitle}>{labels.subtitle}</Text>
+          <Text style={styles.title}>{t('uploadCardTitle')}</Text>
+          {/* บอกเพดานไว้ตลอด ให้รู้ก่อนถ่ายว่าต้องเลือกมุมที่สำคัญที่สุด */}
+          <Text style={styles.limitNote}>
+            {t('photoLimitNote').replace('{max}', String(max))}
+          </Text>
         </View>
-        <View style={styles.headerIcon}>
-          <UploadIcon size={24} color={CYAN} />
+        <View style={[styles.countChip, full && styles.countChipFull]}>
+          <Text style={[styles.countText, full && styles.countTextFull]}>
+            {total}/{max}
+          </Text>
         </View>
       </View>
 
-      {/*
-        กรอบเส้นประ แตะที่ไหนก็ได้เพื่อเปิดกล้องหรือคลังภาพ
-
-        ตอนยังไม่มีรูปแสดงแบบเต็มพร้อมคำอธิบาย เพราะเป็นสิ่งแรกที่ต้องสะดุดตา
-        พอแนบรูปแล้วย่อเหลือแถวเดียว ไม่งั้นการ์ดจะยาวจนต้องเลื่อนหาช่องกรอกสาเหตุ
-      */}
-      <TouchableOpacity
-        style={[compact ? styles.dropzoneCompact : styles.dropzone, addDisabled && styles.disabled]}
-        onPress={onAdd}
-        activeOpacity={0.8}
-        disabled={addDisabled}>
-        <View style={compact ? styles.dropIconRingSmall : styles.dropIconRing}>
-          <PhotoIcon size={compact ? 22 : 36} color={CYAN} />
-        </View>
-        <Text style={compact ? styles.dropTitleCompact : styles.dropTitle}>{labels.dropzone}</Text>
-        {!compact && (
-          <Text style={styles.dropHint}>
-            {labels.formats} • {labels.maxSize}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      {/* แถวที่กำลังอัปโหลด พร้อมแถบความคืบหน้าจริงจากจำนวน byte ที่ส่งไปแล้ว */}
-      {uploading && (
-        <View style={styles.row}>
-          <View style={styles.rowMain}>
-            <View style={styles.rowIcon}>
-              <PhotoIcon size={24} color={CYAN} />
-            </View>
-            <View style={styles.rowTextWrap}>
-              <Text style={styles.rowTitle}>{labels.uploading}</Text>
-              <Text style={styles.rowMeta}>{Math.round((progress ?? 0) * 100)}%</Text>
-            </View>
+      {status === 'error' && (
+        <View style={styles.errorBox}>
+          <View style={styles.errorTextWrap}>
+            <Text style={styles.errorTitle}>{t('photoLoadFailed')}</Text>
+            {loadError && (
+              <Text style={styles.errorDetail} numberOfLines={2}>
+                {loadError}
+              </Text>
+            )}
           </View>
-          <View style={styles.progressTrack}>
-            <LinearGradient
-              colors={[CYAN, SKY]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={[styles.progressFill, { width: `${Math.round((progress ?? 0) * 100)}%` }]}
-            />
-          </View>
+          <TouchableOpacity style={styles.errorButton} onPress={onReload} activeOpacity={0.8}>
+            <Text style={styles.errorButtonText}>{t('photoReload')}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {photos.map((photo, i) => (
-        <View key={photo.fileName} style={styles.row}>
-          <TouchableOpacity
-            style={styles.rowMain}
-            onPress={() => setViewing(i)}
-            activeOpacity={0.7}
-            accessibilityRole="imagebutton">
-            <Image source={{ uri: photo.url }} style={styles.thumb} contentFit="cover" />
-            <View style={styles.rowTextWrap}>
-              <Text style={styles.rowTitle}>{timeOfFile(photo.fileName)}</Text>
-              <Text style={styles.rowMeta}>
-                {formatSize(photo.size)}
-                {photo.userName ? ` • ${photo.userName}` : ''}
-              </Text>
+      {status === 'loading' && (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator color={c.primary} />
+          <Text style={styles.loadingText}>{t('photoLoading')}</Text>
+        </View>
+      )}
+
+      {staging > 0 && (
+        <View style={styles.loadingRow}>
+          <ActivityIndicator color={c.primary} />
+          <Text style={styles.loadingText}>
+            {t('photoPreparing').replace('{count}', String(staging))}
+          </Text>
+        </View>
+      )}
+
+      {queue.map((item) => {
+        const s = statusOf(item);
+        const active = item.key === activeKey;
+        return (
+          <View key={item.key} style={[styles.queueRow, item.error && styles.queueRowFailed]}>
+            <View style={styles.queueMain}>
+              <Image source={{ uri: item.uri }} style={styles.queueThumb} contentFit="cover" />
+              <View style={styles.queueText}>
+                <Text style={[styles.queueStatus, { color: s.color }]}>{s.text}</Text>
+                {item.error ? (
+                  <>
+                    <Text style={styles.queueDetail} numberOfLines={2}>
+                      {item.error}
+                    </Text>
+                    <Text style={styles.queueHint}>{t('photoKeptHint')}</Text>
+                  </>
+                ) : (
+                  active && (
+                    <View style={styles.progressTrack}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          { width: `${Math.round(Math.min(progress, 1) * 100)}%` },
+                        ]}
+                      />
+                    </View>
+                  )
+                )}
+              </View>
             </View>
+
+            {item.error && (
+              <View style={styles.queueActions}>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => onRetry(item.key)}
+                  activeOpacity={0.8}>
+                  <Text style={styles.retryText}>{t('photoRetry')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.discardButton}
+                  onPress={() => onDiscard(item)}
+                  activeOpacity={0.8}>
+                  <Text style={styles.discardText}>{t('photoDiscard')}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        );
+      })}
+
+      {failed.length > 1 && (
+        <TouchableOpacity
+          style={styles.retryAllButton}
+          onPress={() => onRetry()}
+          activeOpacity={0.8}>
+          <Text style={styles.retryAllText}>
+            {t('photoRetryAll').replace('{count}', String(failed.length))}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      {photos.length > 0 && (
+        <View
+          style={styles.grid}
+          onLayout={(e: LayoutChangeEvent) => setGridWidth(e.nativeEvent.layout.width)}>
+          {tileSize > 0 &&
+            photos.map((photo, i) => (
+              <View key={photo.fileName} style={{ width: tileSize, height: tileSize }}>
+                <TouchableOpacity
+                  style={styles.tile}
+                  onPress={() => setViewing(i)}
+                  activeOpacity={0.8}
+                  accessibilityRole="imagebutton">
+                  <Image source={{ uri: photo.url }} style={styles.tileImage} contentFit="cover" />
+                  {timeOfFile(photo.fileName) !== '' && (
+                    <View style={styles.tileCaption}>
+                      <Text style={styles.tileCaptionText}>{timeOfFile(photo.fileName)}</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                {/* ปุ่มลบ 36dp + hitSlop รวมเป็นเป้ากดราว 48dp และมีกล่องยืนยันก่อนลบเสมอ */}
+                <TouchableOpacity
+                  style={styles.tileDelete}
+                  onPress={() => onRemove(photo)}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('deletePhotoTitle')}>
+                  <CloseIcon color="#FFFFFF" size={16} />
+                </TouchableOpacity>
+              </View>
+            ))}
+        </View>
+      )}
+
+      {status === 'ready' && photos.length === 0 && queue.length === 0 && staging === 0 && (
+        <Text style={styles.emptyText}>{t('photoEmpty')}</Text>
+      )}
+
+      {full ? (
+        <View style={[styles.addButton, styles.addButtonDisabled]}>
+          <Text style={styles.addTextDisabled}>
+            {t('photoFull').replace('{max}', String(max))}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.addRow}>
+          {/* ถ่ายรูปใช้บ่อยกว่า จึงเป็นปุ่มสีหลักและกว้างกว่า */}
+          <TouchableOpacity
+            style={[styles.addButton, styles.cameraButton]}
+            onPress={onTakePhoto}
+            activeOpacity={0.85}
+            accessibilityRole="button">
+            <CameraIcon color={c.onPrimary} />
+            <Text style={styles.addText}>{t('takePhoto')}</Text>
           </TouchableOpacity>
-
-          <View style={styles.rowActions}>
-            <CheckIcon size={18} color={EMERALD} />
-            <Text style={styles.completeText}>{labels.complete}</Text>
-            <TouchableOpacity onPress={() => onRemove(photo)} hitSlop={spacing.sm}>
-              <CloseIcon size={18} color={SLATE_400} />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={[styles.addButton, styles.libraryButton]}
+            onPress={onPickLibrary}
+            activeOpacity={0.85}
+            accessibilityRole="button">
+            <GalleryIcon color={c.primary} />
+            <Text style={styles.libraryText}>{t('photoLibrary')}</Text>
+          </TouchableOpacity>
         </View>
-      ))}
+      )}
 
-      {/* วงแหวนนับจำนวนรูป แทนแถบพื้นที่เก็บของต้นฉบับ */}
-      <View style={styles.usedBox}>
-        <View>
-          <Text style={styles.usedLabel}>{labels.used}</Text>
-          <View style={styles.usedNumbers}>
-            <Text style={styles.usedBig}>{photos.length}</Text>
-            <Text style={styles.usedSmall}>/ {max}</Text>
-          </View>
-        </View>
-
-        <View style={styles.ringWrap}>
-          <Svg width={48} height={48} viewBox="0 0 36 36">
-            <Circle cx={18} cy={18} r={16} fill="none" stroke={SLATE_800} strokeWidth={2} />
-            <Circle
-              cx={18}
-              cy={18}
-              r={16}
-              fill="none"
-              stroke={CYAN}
-              strokeWidth={2}
-              strokeDasharray={RING_LENGTH}
-              // เริ่มวาดจากบนสุดตามหมุน -90 องศาของต้นฉบับ
-              strokeDashoffset={RING_LENGTH * (1 - ratio)}
-              transform="rotate(-90 18 18)"
-              strokeLinecap="round"
-            />
-          </Svg>
-          <Text style={styles.ringText}>{percent}%</Text>
-        </View>
-      </View>
-
-      <View style={styles.buttonRow}>
+      {photos.length > 1 && (
         <TouchableOpacity
-          style={[styles.primaryButton, addDisabled && styles.disabled]}
-          onPress={onAdd}
-          activeOpacity={0.85}
-          disabled={addDisabled}>
-          <LinearGradient
-            colors={[CYAN, SKY]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.primaryFill}
-          />
-          <View style={styles.primaryInner}>
-            <Text style={styles.primaryText}>{labels.uploadMore}</Text>
-            <UploadIcon size={16} color={WHITE} />
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.secondaryButton, photos.length === 0 && styles.disabled]}
+          style={styles.clearAll}
           onPress={onClearAll}
-          activeOpacity={0.85}
-          disabled={photos.length === 0}>
-          <Text style={styles.secondaryText}>{labels.clearAll}</Text>
+          hitSlop={spacing.sm}
+          accessibilityRole="button">
+          <Text style={styles.clearAllText}>{t('uploadClearAll')}</Text>
         </TouchableOpacity>
-      </View>
+      )}
 
       <PhotoViewer
         photos={photos}
@@ -308,134 +345,162 @@ export default function PhotoUploadCard({
   );
 }
 
-const createStyles = () =>
+const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
     card: {
-      backgroundColor: SLATE_950,
-      borderRadius: 16,
-      padding: spacing.md,
-      overflow: 'hidden',
-      shadowColor: '#000',
-      shadowOpacity: 0.4,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: 12 },
-      elevation: 10,
+      backgroundColor: c.surface,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: spacing.lg,
+      marginBottom: spacing.md,
+      gap: spacing.md,
     },
-    blobTop: { position: 'absolute', top: -100, left: -100 },
-    blobBottom: { position: 'absolute', bottom: -100, right: -100 },
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     headerText: { flex: 1, paddingRight: spacing.sm },
-    title: { color: WHITE, fontSize: font.body, fontWeight: '600' },
-    subtitle: { color: SLATE_400, fontSize: font.small, marginTop: 2 },
-    headerIcon: { backgroundColor: 'rgba(6,182,212,0.1)', borderRadius: 8, padding: 8 },
-    dropzone: {
-      marginTop: spacing.md,
-      borderRadius: 12,
-      borderWidth: 2,
-      borderStyle: 'dashed',
-      borderColor: SLATE_700,
-      backgroundColor: 'rgba(15,23,42,0.5)',
-      paddingVertical: spacing.lg,
+    title: { fontSize: font.body, fontWeight: '700', color: c.textPrimary },
+    limitNote: { fontSize: font.small, color: c.textSecondary, marginTop: 2 },
+    countChip: {
       paddingHorizontal: spacing.md,
-      alignItems: 'center',
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: c.chipBg,
     },
-    dropzoneCompact: {
-      marginTop: spacing.md,
-      borderRadius: 12,
-      borderWidth: 2,
-      borderStyle: 'dashed',
-      borderColor: SLATE_700,
-      backgroundColor: 'rgba(15,23,42,0.5)',
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
+    countChipFull: { backgroundColor: c.badgePendingBg },
+    countText: {
+      fontSize: font.small,
+      fontWeight: '700',
+      color: c.primary,
+      fontVariant: ['tabular-nums'],
+    },
+    countTextFull: { color: c.warning },
+    errorBox: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.sm,
+      gap: spacing.md,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.danger,
+      backgroundColor: c.dangerBg,
     },
-    dropIconRing: {
-      width: 60,
-      height: 60,
-      borderRadius: 30,
-      backgroundColor: SLATE_900,
+    errorTextWrap: { flex: 1 },
+    errorTitle: { fontSize: font.small, fontWeight: '700', color: c.danger },
+    errorDetail: { fontSize: font.small, color: c.textSecondaryStrong, marginTop: 2 },
+    errorButton: {
+      minHeight: 44,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radius.sm,
+      backgroundColor: c.danger,
       alignItems: 'center',
       justifyContent: 'center',
-      marginBottom: spacing.sm,
     },
-    dropIconRingSmall: {
+    errorButtonText: { fontSize: font.small, fontWeight: '700', color: c.onStatus },
+    loadingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    loadingText: { fontSize: font.small, color: c.textSecondary },
+    queueRow: {
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.bg,
+      gap: spacing.md,
+    },
+    queueRowFailed: { borderColor: c.danger, backgroundColor: c.cardPendingBg },
+    queueMain: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    queueThumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: c.border },
+    queueText: { flex: 1, gap: 2 },
+    queueStatus: { fontSize: font.body, fontWeight: '700' },
+    queueDetail: { fontSize: font.small, color: c.textSecondaryStrong },
+    queueHint: { fontSize: font.small, color: c.textSecondary },
+    progressTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: c.border,
+      overflow: 'hidden',
+      marginTop: spacing.xs,
+    },
+    progressFill: { height: '100%', borderRadius: 3, backgroundColor: c.primary },
+    queueActions: { flexDirection: 'row', gap: spacing.sm },
+    retryButton: {
+      flex: 2,
+      minHeight: controlHeight - 4,
+      borderRadius: radius.sm,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    retryText: { fontSize: font.body, fontWeight: '700', color: c.onPrimary },
+    discardButton: {
+      flex: 1,
+      minHeight: controlHeight - 4,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    discardText: { fontSize: font.body, fontWeight: '600', color: c.textSecondaryStrong },
+    retryAllButton: {
+      minHeight: controlHeight - 4,
+      borderRadius: radius.sm,
+      borderWidth: 1.5,
+      borderColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    retryAllText: { fontSize: font.body, fontWeight: '700', color: c.primary },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    tile: { flex: 1, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: c.border },
+    tileImage: { flex: 1 },
+    tileCaption: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingVertical: 2,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      alignItems: 'center',
+    },
+    tileCaptionText: {
+      fontSize: font.small,
+      fontWeight: '600',
+      color: '#FFFFFF',
+      fontVariant: ['tabular-nums'],
+    },
+    tileDelete: {
+      position: 'absolute',
+      top: 4,
+      right: 4,
       width: 36,
       height: 36,
       borderRadius: 18,
-      backgroundColor: SLATE_900,
+      backgroundColor: 'rgba(0,0,0,0.6)',
       alignItems: 'center',
       justifyContent: 'center',
     },
-    dropTitleCompact: { color: WHITE, fontSize: font.body - 1, fontWeight: '500' },
-    dropTitle: { color: WHITE, fontSize: font.body, fontWeight: '500', textAlign: 'center' },
-    dropHint: { color: SLATE_400, fontSize: font.small - 1, marginTop: 4, textAlign: 'center' },
-    row: {
-      marginTop: spacing.sm,
-      backgroundColor: 'rgba(15,23,42,0.5)',
-      borderRadius: 12,
-      padding: spacing.md,
-    },
-    rowMain: { flexDirection: 'row', alignItems: 'center' },
-    rowIcon: { backgroundColor: 'rgba(6,182,212,0.1)', borderRadius: 8, padding: 8 },
-    thumb: { width: 40, height: 40, borderRadius: 8, backgroundColor: SLATE_800 },
-    rowTextWrap: { flex: 1, marginLeft: spacing.sm },
-    rowTitle: { color: WHITE, fontSize: font.body - 1, fontWeight: '500' },
-    rowMeta: { color: SLATE_400, fontSize: font.small - 1, marginTop: 2 },
-    rowActions: {
+    emptyText: { fontSize: font.small, color: c.textSecondary },
+    addRow: { flexDirection: 'row', gap: spacing.sm },
+    addButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'flex-end',
+      justifyContent: 'center',
       gap: spacing.sm,
-      marginTop: spacing.sm,
+      minHeight: controlHeight,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.md,
     },
-    completeText: { color: EMERALD, fontSize: font.small, fontWeight: '500', marginRight: spacing.xs },
-    progressTrack: {
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: SLATE_800,
-      overflow: 'hidden',
-      marginTop: spacing.sm,
+    cameraButton: { flex: 3, backgroundColor: c.primary },
+    libraryButton: {
+      flex: 2,
+      borderWidth: 1.5,
+      borderColor: c.primary,
+      backgroundColor: c.surface,
     },
-    progressFill: { height: '100%', borderRadius: 2 },
-    usedBox: {
-      marginTop: spacing.sm,
-      backgroundColor: 'rgba(15,23,42,0.5)',
-      borderRadius: 12,
-      padding: spacing.md,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    usedLabel: { color: WHITE, fontSize: font.small, fontWeight: '500' },
-    usedNumbers: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, marginTop: 4 },
-    usedBig: { color: WHITE, fontSize: font.h2, fontWeight: '700', lineHeight: font.h2 + 2 },
-    usedSmall: { color: SLATE_400, fontSize: font.small },
-    ringWrap: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
-    ringText: { position: 'absolute', color: WHITE, fontSize: font.small - 1, fontWeight: '500' },
-    buttonRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-    primaryButton: { flex: 1, borderRadius: 12, overflow: 'hidden', padding: 1 },
-    primaryFill: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
-    primaryInner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      borderRadius: 11,
-      backgroundColor: 'rgba(2,6,23,0.5)',
-      paddingVertical: 10,
-    },
-    primaryText: { color: WHITE, fontSize: font.body - 1, fontWeight: '500' },
-    secondaryButton: {
-      flex: 1,
-      borderRadius: 12,
-      backgroundColor: SLATE_900,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 11,
-    },
-    secondaryText: { color: WHITE, fontSize: font.body - 1, fontWeight: '500' },
-    disabled: { opacity: 0.4 },
+    addButtonDisabled: { backgroundColor: c.border },
+    addText: { fontSize: font.body, fontWeight: '700', color: c.onPrimary },
+    libraryText: { fontSize: font.body, fontWeight: '700', color: c.primary },
+    addTextDisabled: { fontSize: font.body, fontWeight: '700', color: c.textSecondary },
+    clearAll: { alignSelf: 'flex-end', paddingVertical: spacing.xs },
+    clearAllText: { fontSize: font.small, fontWeight: '600', color: c.danger },
   });

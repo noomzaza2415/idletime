@@ -1,10 +1,10 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { formatDateString } from '@/api/idle-rules';
+import { MIN_VISIBLE_MINS } from '@/api/idle-rules';
 import {
   viewTimeline,
   type LineTimeline,
@@ -26,8 +26,16 @@ import { useTheme } from '@/context/theme-context';
 interface Props {
   visible: boolean;
   onClose: () => void;
-  timeline: LineTimeline;
+  /** null = ข้อมูลของไลน์ที่เลือกยังโหลดไม่เสร็จ หรือโหลดไม่สำเร็จ */
+  timeline: LineTimeline | null;
+  /** กำลังโหลดข้อมูลกะอยู่ ใช้แยกระหว่าง "รอสักครู่" กับ "โหลดไม่สำเร็จ" ตอน timeline เป็น null */
+  loading: boolean;
+  lines: string[];
   line: string;
+  /** สลับไลน์จากในหน้านี้ ใช้ state เดียวกับแท็บในหน้ารายการ ปิดหน้านี้แล้วจึงอยู่ไลน์เดียวกัน */
+  onLineChange: (line: string) => void;
+  /** วันของกะ "YYYY-MM-DD" แสดงได้แม้ข้อมูลยังไม่มา */
+  date: string;
   isToday: boolean;
 }
 
@@ -64,7 +72,17 @@ function hoursMinutes(mins: number) {
  * จึงเว้นระยะขอบด้วย SafeAreaView ที่วัดจากหน้าต่างของ Modal เอง
  * ทั้งแอปยังล็อกแนวตั้งตาม app.json หน้านี้ล็อกแนวนอนเฉพาะตอนเปิดอยู่ แล้วคืนเป็นแนวตั้งเมื่อปิด
  */
-export default function LineStatusFullscreen({ visible, onClose, timeline, line, isToday }: Props) {
+export default function LineStatusFullscreen({
+  visible,
+  onClose,
+  timeline,
+  loading,
+  lines,
+  line,
+  onLineChange,
+  date,
+  isToday,
+}: Props) {
   const { colors: c, isDark } = useTheme();
   const { t } = useLanguage();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -85,38 +103,49 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
     };
   }, [visible]);
 
-  const view = useMemo(() => viewTimeline(timeline, now, range), [timeline, now, range]);
+  const view = useMemo(
+    () => (timeline ? viewTimeline(timeline, now, range) : null),
+    [timeline, now, range]
+  );
 
   // ช่วงที่เลือกไว้อาจหายไปเมื่อเปลี่ยนช่วงเวลาหรือข้อมูลอัปเดต ใช้ข้อมูลล่าสุดของ id เดิมเสมอ
-  const current = selected ? (view.segments.find((s) => s.id === selected.id) ?? null) : null;
+  const current =
+    selected && view ? (view.segments.find((s) => s.id === selected.id) ?? null) : null;
 
-  const live = isToday && view.end === now;
+  const live = !!view && isToday && view.end === now;
   const times = (count: number) => t('timelineTimes').replace('{count}', String(count));
+  /** ระหว่างรอข้อมูลไลน์ใหม่ ตัวเลขเป็นขีด ห้ามแสดงตัวเลขของไลน์เดิมใต้ชื่อไลน์ใหม่ */
+  const dash = '–';
 
   const stats = [
     {
       key: 'running',
       color: colors.running,
       label: t('timelineRunning'),
-      value: hoursMinutes(view.runningMins),
+      value: view ? hoursMinutes(view.runningMins) : dash,
       unit: t('timelineHours'),
-      sub: `${Math.round(view.runningRatio * 100)}% ${t('timelineOfTime')}`,
+      sub: view ? `${Math.round(view.runningRatio * 100)}% ${t('timelineOfTime')}` : '',
     },
     {
       key: 'stop',
       color: colors.stop,
       label: t('timelineStop'),
-      value: String(Math.round(view.stopMins)),
+      value: view ? String(Math.round(view.stopMins)) : dash,
       unit: t('timelineMinutes'),
-      sub: times(view.stopCount),
+      sub: view ? times(view.stopCount) : '',
+      /**
+       * แถบนับการหยุดทุกครั้งจากเครื่อง แต่หน้ารายการซ่อนครั้งที่สั้นมาก
+       * บอกไว้ตรงนี้ ลีดเดอร์จะได้ไม่สงสัยว่าทำไมจำนวนไม่เท่ากัน
+       */
+      note: t('timelineStopNote').replace('{mins}', String(MIN_VISIBLE_MINS)),
     },
     {
       key: 'break',
       color: colors.break,
       label: t('timelineBreak'),
-      value: String(Math.round(view.breakMins)),
+      value: view ? String(Math.round(view.breakMins)) : dash,
       unit: t('timelineMinutes'),
-      sub: times(view.breakCount),
+      sub: view ? times(view.breakCount) : '',
     },
   ];
 
@@ -139,16 +168,38 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
           <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
             <View style={styles.screen}>
               <View style={styles.header}>
-                <View style={styles.linePill}>
-                  <Text style={styles.linePillText}>{line.toUpperCase()}</Text>
+                {/*
+                  สลับไลน์ได้ในหน้านี้เลย ไม่ต้องปิด หมุนจอกลับ กดแท็บ แล้วเปิดใหม่
+                  ช่วงเวลาและซูมคงไว้ เทียบสองไลน์ในช่วงเดียวกันได้ทันที
+                */}
+                <View style={styles.segmented} accessibilityRole="radiogroup">
+                  {lines.map((l) => {
+                    const active = l === line;
+                    return (
+                      <TouchableOpacity
+                        key={l}
+                        onPress={() => {
+                          if (active) return;
+                          setSelected(null);
+                          onLineChange(l);
+                        }}
+                        style={[styles.segmentButton, active && styles.segmentButtonActive]}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: active }}>
+                        <Text
+                          style={[styles.lineText, active && styles.segmentTextActive]}>
+                          {l.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
                 <View style={styles.headerText}>
                   <Text style={styles.title} numberOfLines={1}>
                     {t('timelineTitle')}
                   </Text>
                   <Text style={styles.subtitle} numberOfLines={1}>
-                    {formatDateString(new Date(timeline.shiftStart))} ·{' '}
-                    {isToday ? t('shiftToday') : t('shiftPast')}
+                    {date} · {isToday ? t('shiftToday') : t('shiftPast')}
                   </Text>
                 </View>
 
@@ -219,9 +270,16 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
                       },
                     ]}>
                     <View style={[styles.statAccent, { backgroundColor: s.color }]} />
-                    <Text style={[styles.statLabel, { color: s.color }]} numberOfLines={1}>
-                      {s.label}
-                    </Text>
+                    <View style={styles.statHead}>
+                      <Text style={[styles.statLabel, { color: s.color }]} numberOfLines={1}>
+                        {s.label}
+                      </Text>
+                      {s.note && view && (
+                        <Text style={styles.statNote} numberOfLines={1}>
+                          {s.note}
+                        </Text>
+                      )}
+                    </View>
                     {/* ตัวเลขชิดซ้าย บรรทัดรองชิดขวาในแถวเดียวกัน ให้เนื้อหาเต็มความกว้างของช่อง */}
                     <View style={styles.statBody}>
                       <Text style={styles.statValueRow} numberOfLines={1}>
@@ -260,19 +318,29 @@ export default function LineStatusFullscreen({ visible, onClose, timeline, line,
                   )}
                 </View>
 
-                <TimelineBar
-                  view={view}
-                  live={live}
-                  endPrefix={live ? t('timelineNow') : undefined}
-                  size="full"
-                  zoom={zoom}
-                  onZoomChange={setZoom}
-                  minZoom={MIN_ZOOM}
-                  maxZoom={MAX_ZOOM}
-                  selectedId={current?.id ?? null}
-                  onSelect={setSelected}
-                  style={styles.chartBar}
-                />
+                {view ? (
+                  <TimelineBar
+                    view={view}
+                    live={live}
+                    endPrefix={live ? t('timelineNow') : undefined}
+                    size="full"
+                    zoom={zoom}
+                    onZoomChange={setZoom}
+                    minZoom={MIN_ZOOM}
+                    maxZoom={MAX_ZOOM}
+                    selectedId={current?.id ?? null}
+                    onSelect={setSelected}
+                    style={styles.chartBar}
+                  />
+                ) : (
+                  <View style={[styles.chartBar, styles.chartPlaceholder]}>
+                    {loading ? (
+                      <ActivityIndicator color={c.primary} size="large" />
+                    ) : (
+                      <Text style={styles.detailHint}>{t('loadFailed')}</Text>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           </SafeAreaView>
@@ -295,13 +363,8 @@ const createStyles = (c: ThemeColors) =>
       paddingBottom: spacing.sm,
     },
     header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    linePill: {
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
-      borderRadius: radius.sm,
-      backgroundColor: c.primary,
-    },
-    linePillText: { fontSize: font.body, fontWeight: '800', letterSpacing: 1, color: c.onPrimary },
+    /** ชื่อไลน์ตัวใหญ่และหนากว่าปุ่มช่วงเวลา เพราะเป็นสิ่งแรกที่ต้องรู้ว่ากำลังดูไลน์ไหน */
+    lineText: { fontSize: font.body, fontWeight: '800', letterSpacing: 1, color: c.textSecondary },
     headerText: { flex: 1 },
     title: { fontSize: font.h2, fontWeight: '800', color: c.textPrimary },
     subtitle: { fontSize: font.small, color: c.textSecondary, marginTop: 1 },
@@ -386,7 +449,14 @@ const createStyles = (c: ThemeColors) =>
     },
     /** แถบสีด้านซ้าย บอกว่าตัวเลขช่องนี้เป็นของสถานะไหน ตรงกับสีบนแถบเวลา */
     statAccent: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 6 },
+    statHead: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+    },
     statLabel: { fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
+    statNote: { flexShrink: 1, fontSize: 12, color: c.textSecondary, textAlign: 'right' },
     statBody: {
       flexDirection: 'row',
       alignItems: 'baseline',
@@ -438,4 +508,5 @@ const createStyles = (c: ThemeColors) =>
     detailStrong: { fontWeight: '800', color: c.textPrimary },
     detailHint: { fontSize: font.small, color: c.textSecondary },
     chartBar: { flex: 1 },
+    chartPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   });

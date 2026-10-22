@@ -23,8 +23,12 @@ export interface IdleTimeRecord {
   dj: boolean; // ต้องรอ DJ หรือไม่
   manPower: string;
   type: string; // ประเภทของสาเหตุ
-  dept: string; // แผนกที่รับผิดชอบ
+  judge: string; // ผลตัดสิน Accept/Delete (judgeWork)
+  reason: string; // เหตุผลประกอบ แยกจากสาเหตุการหยุด (reason)
+  dept: string; // แผนกที่รับผิดชอบ หรือชื่อ vendor เมื่อต้องรอ vendor
   remark: string;
+  /** สถานะไลน์จากเครื่องจักร เช่น RUNNING, REWORK แสดงอย่างเดียว */
+  status: string;
 
   isBreakTime?: boolean; // true = ช่วงพักเบรก ไม่นับ idle จริง
   /**
@@ -125,6 +129,57 @@ export const IDLE_ISSUE_OPTIONS = [
  */
 export const BREAK_TIME_VALUE = 'Break Time';
 
-export const DEPT_OPTIONS = ['Production', 'Maintenance', 'QC', 'Warehouse', 'Engineering'];
+/*
+  ตัวเลือกทั้งหมดคัดลอกจากหน้า dashboard ของเว็บ ต้องตรงกันทุกตัวและเรียงเหมือนกัน
+  ถ้าแอปใช้ชื่อที่เว็บไม่รู้จัก รายงานฝั่งเว็บจะจัดกลุ่มไม่ตรง และช่องบนเว็บจะแสดงเป็นว่าง
+*/
 
-export const TYPE_OPTIONS = ['Machine', 'Man', 'Material', 'Method', 'Other'];
+export const TYPE_OPTIONS = [
+  'Equipment',
+  'Other',
+  'Quality',
+  'Rework',
+  'Shortage',
+  'Delivery',
+  'Process',
+  'Model change',
+  'Seowon',
+];
+
+export const JUDGE_OPTIONS = ['Accept', 'Delete'];
+
+/** แผนกในโรงงาน ใช้เมื่อไม่ได้รอ vendor */
+export const DEPT_OPTIONS = [
+  'Production',
+  'RD',
+  'Vibration',
+  'INJ',
+  'Set line',
+  'Purchase',
+  'Sealant',
+  'Sale',
+  'Line',
+  'Store',
+  'PE',
+  'QC',
+];
+
+/** รายชื่อ vendor ช่อง Dept เปลี่ยนมาใช้รายการนี้เมื่อติ๊ก "ต้องรอ Vendor" เหมือนเว็บ */
+export const VENDOR_OPTIONS = [
+  'Daeji',
+  'Haeng Sung',
+  'Sung Eun',
+  'TFL',
+  'Dae - A',
+  'Shin Ho Thai',
+  'LG',
+  'Fine Web Tech',
+  'Han Yang',
+  'PSM',
+  'Moon Sung',
+  'RDP',
+  'Thai Sung Su',
+  'Kotec',
+  'Taejin',
+  'Ching Cheng',
+];

@@ -17,14 +17,19 @@ export class FirestoreStore {
     this.db = admin.firestore(app);
   }
 
-  /** token ทั้งหมดที่ยังใช้งานได้ */
-  async activeTokens() {
+  /**
+   * เครื่องทั้งหมดที่ยังใช้งานได้ พร้อม platform เพราะ iPhone ต้องส่งผ่าน APNs ไม่ใช่ FCM
+   * @returns {Promise<{token: string, platform: string}[]>}
+   */
+  async activeDevices() {
     const snapshot = await this.db
       .collection(FirestoreStore.COLLECTION)
       .where('active', '==', true)
       .get();
 
-    return snapshot.docs.map((doc) => doc.get('token')).filter(Boolean);
+    return snapshot.docs
+      .map((doc) => ({ token: doc.get('token'), platform: doc.get('platform') ?? 'unknown' }))
+      .filter((device) => device.token);
   }
 
   /**

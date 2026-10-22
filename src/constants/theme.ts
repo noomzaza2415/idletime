@@ -15,10 +15,13 @@ const light = {
   dangerBg: '#FEE2E2',
   success: '#16A34A',
   warning: '#EA580C',
-  border: '#E5E7EB',
+  /** slate-300 — เดิม #E5E7EB ต่างจากพื้นแค่ 1.2:1 ขอบช่องกรอกหายไปใต้แสงจ้าหน้าไลน์ */
+  border: '#CBD5E1',
   textPrimary: '#111827',
   textSecondary: '#6B7280',
   chipBg: '#EFF6FF',
+  /** ขอบกล่องข้อมูลที่ระบบคำนวณให้ (Man Hour/Amount) พื้น chipBg อย่างเดียวกลืนกับพื้นจอ */
+  infoBoxBorder: '#BFDBFE',
   badgeDoneBg: '#DCFCE7',
   badgePendingBg: '#FEF3C7',
   /** พื้นการ์ดบอกสถานะ — จางกว่า dangerBg/badgeDoneBg เพื่อไม่ให้แย่งสายตาจากตัวหนังสือ */
@@ -36,26 +39,42 @@ const light = {
   breakBg: '#FEFCE8',
   onStatus: '#FFFFFF',
   onPrimary: '#FFFFFF',
+  /**
+   * ป้ายสถานะไลน์จากเครื่องจักร (ช่อง Status) — สีเดียวกับตารางบนเว็บ
+   * RUNNING = emerald, REWORK = orange (Tailwind 100/700/200)
+   */
+  machineRunningBg: '#D1FAE5',
+  machineRunningText: '#047857',
+  machineRunningBorder: '#A7F3D0',
+  machineReworkBg: '#FFEDD5',
+  machineReworkText: '#C2410C',
+  machineReworkBorder: '#FED7AA',
 };
 
-/** โทนมืด: สีน้ำเงิน/แดง/เขียว ถูกทำให้สว่างขึ้นเพื่อให้ contrast ผ่านบนพื้นเข้ม */
+/**
+ * โทนมืดแบบกรมท่า: พื้นออกน้ำเงินและสว่างกว่าดำล้วน ให้อ่านง่ายขึ้นเมื่อดูนาน ๆ
+ * สีน้ำเงิน/แดง/เขียว ถูกทำให้สว่างขึ้นเพื่อให้ contrast ผ่านบนพื้นเข้ม
+ */
 const dark: typeof light = {
-  bg: '#0B0F17',
-  surface: '#151B26',
+  bg: '#141E33',
+  surface: '#1D2A45',
   primary: '#60A5FA',
   primaryDark: '#3B82F6',
   danger: '#F87171',
-  dangerBg: '#3F1D1D',
+  dangerBg: '#4A2433',
   success: '#4ADE80',
   warning: '#FBBF24',
-  border: '#263041',
+  border: '#33466A',
   textPrimary: '#F3F4F6',
-  textSecondary: '#9CA3AF',
-  chipBg: '#172554',
-  badgeDoneBg: '#14321F',
-  badgePendingBg: '#3A2C10',
-  cardPendingBg: '#241A1E',
-  textSecondaryStrong: '#C6CBD4',
+  /** สว่างกว่าเทามาตรฐาน (7.7:1 บนการ์ด) ให้ตัวเล็กอย่างเวลา/ป้ายแกน timeline อ่านง่ายสำหรับผู้ใช้สูงวัย */
+  textSecondary: '#B4BFD2',
+  /** ต้องให้ primary บนพื้นนี้ได้ ≥ 4.5:1 เพราะตัวอักษร TH/EN บนปุ่มภาษาใช้สีนี้ */
+  chipBg: '#1E3462',
+  infoBoxBorder: '#2C4A80',
+  badgeDoneBg: '#183F37',
+  badgePendingBg: '#45381C',
+  cardPendingBg: '#33263A',
+  textSecondaryStrong: '#CFD8E6',
   /** โหมดมืดใช้ primary แทน เพราะสีต้นฉบับเหลือ 2.21:1 ต่ำกว่าเกณฑ์ 3.0 ของ UI component */
   focusAccent: '#60A5FA',
   statusPendingFill: '#F87171',
@@ -63,9 +82,16 @@ const dark: typeof light = {
   /** โหมดมืดใช้เหลืองสว่างขึ้น เพราะเหลืองเข้มจมไปกับพื้นการ์ด */
   statusBreakFill: '#FBBF24',
   breakAccent: '#FBBF24',
-  breakBg: '#332810',
-  onStatus: '#0B0F17',
-  onPrimary: '#0B0F17',
+  breakBg: '#3D3520',
+  onStatus: '#0F172A',
+  onPrimary: '#0F172A',
+  /** โหมดมืดของเว็บใช้พื้น 900 โปร่ง 40% — ผสมกับ surface ไว้ล่วงหน้าเป็นสีทึบ */
+  machineRunningBg: '#143841',
+  machineRunningText: '#34D399',
+  machineRunningBorder: '#065F46',
+  machineReworkBg: '#432B31',
+  machineReworkText: '#FB923C',
+  machineReworkBorder: '#9A3412',
 };
 
 export type ThemeMode = 'light' | 'dark';

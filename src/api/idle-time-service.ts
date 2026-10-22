@@ -7,6 +7,7 @@ import {
   USE_MOCK_DATA,
   toCdEquip,
 } from '@/api/config';
+import { AppError, describeEndpoint } from '@/api/app-error';
 import { fetchRead, fetchWithTimeout } from '@/api/http';
 import {
   formatDateString,
@@ -44,13 +45,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isRead = !options.method || options.method.toUpperCase() === 'GET';
   const url = `${API_BASE_URL}${path}`;
   const res = isRead ? await fetchRead(url, init) : await fetchWithTimeout(url, init);
+  const endpoint = describeEndpoint(options.method ?? 'GET', url);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`API error ${res.status}: ${text || res.statusText}`);
+    throw new AppError('HTTP', { status: res.status, serverMessage: text || res.statusText, endpoint });
   }
-  const body = (await res.json()) as ApiEnvelope<T>;
+  const body = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
+  if (!body) throw new AppError('BAD_RESPONSE', { status: res.status, endpoint });
   if (!body.isSuccess) {
-    throw new Error(body.errorMessages?.join(', ') || 'API ตอบกลับว่าไม่สำเร็จ');
+    throw new AppError('REJECTED', {
+      status: res.status,
+      serverMessage: body.errorMessages?.join(', ') || undefined,
+      endpoint,
+    });
   }
   return body.result;
 }
@@ -111,7 +118,7 @@ function selectVisible(raw: ApiIdleTimeRecord[], dateString: string): ApiIdleTim
     // รายการยาว (> 0.60 นาที) นับหมด ส่วนรายการสั้นค่อยๆ เติมจนกว่าผลรวมจะถึงเป้า
     //
     // หมายเหตุ: ตอนนี้ smallItems ว่างเสมอ เพราะ valid ด้านบนกรองรายการที่ไม่เกิน
-    // MIN_VISIBLE_MINS (2 นาที) ทิ้งไปแล้ว ส่วนนี้จึงไม่มีผลกับผลลัพธ์
+    // MIN_VISIBLE_MINS (1 นาที) ทิ้งไปแล้ว ส่วนนี้จึงไม่มีผลกับผลลัพธ์
     // ที่ยังเก็บไว้เพราะเป็นกติกาที่พอร์ตมาจากเว็บ ถ้าวันหนึ่งลด MIN_VISIBLE_MINS
     // ลงต่ำกว่า 0.6 นาที กติกานี้จะกลับมาทำงานและผลจะตรงกับเว็บเหมือนเดิม
     const mainItems = lineData.filter((item) => (item.totaltimeoffMins ?? 0) > 0.6);
@@ -168,8 +175,11 @@ function toIdleTimeRecord(api: ApiIdleTimeRecord, index: number): IdleTimeRecord
     dj: Number(api.djTime ?? 0) > 0,
     manPower: api.manPower === null || api.manPower === undefined ? '' : String(api.manPower),
     type: api.typeWork ?? '',
+    judge: api.judgeWork ?? '',
+    reason: api.reason ?? '',
     dept: api.dept ?? '',
     remark: api.remark ?? '',
+    status: api.status ?? '',
 
     isBreakTime: isBreak,
   };
@@ -192,6 +202,27 @@ const NUMERIC_KEYS = new Set([
   'amountThb',
 ]);
 
+/**
+ * ค่าแรงที่เสียไปต่อหนึ่งนาทีที่ไลน์หยุด (บาท) ตรงกับค่าที่หน้า dashboard ของเว็บใช้
+ * เว็บคิด Amount จากนาทีอย่างเดียว ไม่ได้คูณ Man Power
+ */
+export const AMOUNT_THB_PER_MIN = 229;
+
+/**
+ * Man Hour และ Amount ที่แสดงบนจอ คิดแบบเดียวกับตารางบนเว็บ
+ * ถ้ายังไม่กรอก Man Power หรือกรอกเป็น 0 เว็บแสดงเป็น 0 ทั้งคู่
+ */
+export function computeLabourCost(totalMins: number, manPower: string | number) {
+  const people = Number(manPower);
+  if (manPower === '' || !Number.isFinite(people) || people <= 0) {
+    return { manHour: 0, amountThb: 0 };
+  }
+  return {
+    manHour: Math.round((totalMins * people) / 60),
+    amountThb: AMOUNT_THB_PER_MIN * totalMins,
+  };
+}
+
 function applyPatch(raw: ApiIdleTimeRecord, patch: Partial<IdleTimeRecord>): ApiIdleTimeRecord {
   const next: ApiIdleTimeRecord = { ...raw };
   const durationMins = Math.round(raw.totaltimeoffMins ?? 0);
@@ -199,10 +230,19 @@ function applyPatch(raw: ApiIdleTimeRecord, patch: Partial<IdleTimeRecord>): Api
   if (patch.idleTimeIssue !== undefined) next.idletimeIss = patch.idleTimeIssue || null;
   if (patch.action !== undefined) next.actionDes = patch.action || null;
   if (patch.type !== undefined) next.typeWork = patch.type || null;
+  if (patch.judge !== undefined) next.judgeWork = patch.judge || null;
+  if (patch.reason !== undefined) next.reason = patch.reason || null;
   if (patch.dept !== undefined) next.dept = patch.dept || null;
   if (patch.remark !== undefined) next.remark = patch.remark || null;
   if (patch.manPower !== undefined) {
     next.manPower = patch.manPower === '' ? null : Number(patch.manPower);
+    // เว็บคำนวณสองช่องนี้ใหม่ทุกครั้งที่แก้ Man Power แล้วเก็บลงระบบ รายงานค่าเสียหายอ่านจากค่าที่เก็บ
+    // ถ้าแอปไม่คำนวณตาม Man Hour กับ Amount จะค้างเป็น 0 หรือค่าเก่า
+    // ใช้สูตรเดียวกับ onBlur ของเว็บตรงตัว รวมถึงกรณีล้าง Man Power ที่ Amount ยังคิดตามนาที
+    // (ตัวเลขถูกปัดเป็นจำนวนเต็มใน toApiPayload เหมือนตอนเว็บบันทึก)
+    const mins = raw.totaltimeoffMins ?? 0;
+    next.manHour = (mins * (Number(patch.manPower) || 0)) / 60;
+    next.amountThb = AMOUNT_THB_PER_MIN * mins;
   }
   // สวิตช์ในแอปเป็น true/false แต่ฝั่ง backend เก็บเป็นจำนวนนาทีที่โยนให้ vendor/DJ
   // จึงตีความว่า "ใช่" = ยกเวลาหยุดทั้งก้อนให้ฝ่ายนั้น
@@ -283,6 +323,8 @@ export const EDITABLE_KEYS = [
   'dj',
   'manPower',
   'type',
+  'judge',
+  'reason',
   'dept',
   'remark',
 ] as const;
@@ -351,7 +393,7 @@ export async function updateRecord(
   // ดึงสดทุกครั้ง ไม่ใช้ cache — เป็นคำสั่งอ่านจึงลองซ้ำเองได้เมื่อสัญญาณสะดุด
   await loadShift(shiftDate, 'ALL');
   const raw = rawById.get(id);
-  if (!raw) throw new Error(`ไม่พบรายการ id=${id} ในระบบแล้ว กรุณาโหลดรายการใหม่`);
+  if (!raw) throw new AppError('RECORD_GONE', { serverMessage: `id=${id} date=${shiftDate}` });
 
   const latest = toIdleTimeRecord(raw, 0);
   const conflicts = (Object.keys(changes) as EditableKey[]).filter(
@@ -404,22 +446,29 @@ export async function login(
     return { token: 'mock-token-123', name: email, expiration: null };
   }
 
-  const res = await fetchWithTimeout(`${AUTH_BASE_URL}${AUTH_ENDPOINTS.login}`, {
+  const url = `${AUTH_BASE_URL}${AUTH_ENDPOINTS.login}`;
+  const endpoint = describeEndpoint('POST', url);
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
 
   const body = (await res.json().catch(() => null)) as AuthEnvelope | null;
-  if (!body) throw new Error(`เชื่อมต่อ auth service ไม่ได้ (HTTP ${res.status})`);
+  if (!body) throw new AppError(res.ok ? 'BAD_RESPONSE' : 'HTTP', { status: res.status, endpoint });
 
+  // รหัสผ่านผิด auth service ตอบ 401 พร้อมเหตุผลเป็นข้อความ ให้ผู้ใช้เห็นเหตุผลนั้นตรง ๆ
   if (!body.isSuccess || typeof body.result === 'string') {
     const message =
       typeof body.result === 'string' ? body.result : body.errorMessages?.join(', ');
-    throw new Error(message || `เข้าสู่ระบบไม่สำเร็จ (HTTP ${res.status})`);
+    throw message
+      ? new AppError('REJECTED', { status: res.status, serverMessage: message, endpoint })
+      : new AppError('HTTP', { status: res.status, endpoint });
   }
 
-  if (!body.result?.token) throw new Error('auth service ไม่ได้ส่ง token กลับมา');
+  if (!body.result?.token) {
+    throw new AppError('BAD_RESPONSE', { status: res.status, serverMessage: 'no token', endpoint });
+  }
 
   return {
     token: body.result.token,

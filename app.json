@@ -7,7 +7,24 @@
     "icon": "./assets/images/icon.png",
     "scheme": "idletime",
     "userInterfaceStyle": "automatic",
-    "ios": {},
+    "ios": {
+      "bundleIdentifier": "com.noomzaza.idletime",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "runtimeVersion": {
+        "policy": "appVersion"
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "ให้ Idle Time Tracker เชื่อมต่อระบบในเครือข่ายโรงงาน เพื่อดูและบันทึกรายการไลน์หยุด"
+      }
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
@@ -37,9 +54,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FFFFFF",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 190
         }
       ],
       [

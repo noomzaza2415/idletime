@@ -13,9 +13,14 @@ interface Props {
    * เพื่อให้หน้าเรียกส่ง callback ตัวเดิมได้ทุกรอบ memo จึงทำงานได้จริง
    */
   onPress: (record: IdleTimeRecord) => void;
+  /**
+   * ลำดับในกลุ่ม work order ที่กางอยู่ (เริ่ม 1) — ส่งมาเมื่อการ์ดอยู่ในกลุ่มเท่านั้น
+   * หัวกลุ่มบอก work order กับ model ไปแล้ว จึงตัดออกไม่ให้ซ้ำ และลดสีลงไม่ให้แย่งสายตาจากหัวกลุ่ม
+   */
+  positionInGroup?: number;
 }
 
-function RecordCardBase({ record, onPress }: Props) {
+function RecordCardBase({ record, onPress, positionInGroup }: Props) {
   const c = useColors();
   const { t } = useLanguage();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -26,6 +31,52 @@ function RecordCardBase({ record, onPress }: Props) {
    */
   const isBreak = record.idleTimeIssue === BREAK_TIME_VALUE;
   const handlePress = useCallback(() => onPress(record), [onPress, record]);
+  const statusColor = isBreak ? c.statusBreakFill : isFilled ? c.statusDoneFill : c.statusPendingFill;
+
+  if (positionInGroup !== undefined) {
+    return (
+      <TouchableOpacity
+        style={[styles.nestedCard, { borderLeftColor: statusColor }]}
+        onPress={handlePress}
+        activeOpacity={0.7}
+      >
+        <View style={styles.headerRow}>
+          <Text style={styles.workOrder} numberOfLines={1}>
+            #{positionInGroup}
+            {"  ·  "}
+            <Text style={styles.timeRange}>
+              {record.startTime} - {record.endTime}
+            </Text>
+          </Text>
+          {/* ป้ายแบบเส้นขอบ เบากว่าป้ายทึบของหัวกลุ่ม แต่ยังบอกสถานะด้วยสีและข้อความ */}
+          <View style={[styles.badgeOutline, { borderColor: statusColor }]}>
+            <Text style={[styles.badgeOutlineText, { color: statusColor }]}>
+              {isBreak ? t("badgeBreak") : isFilled ? t("badgeDone") : t("badgePending")}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.metaRow}>
+          <Text style={styles.metaText} numberOfLines={1}>
+            {t("lotSizeLabel")} {record.lotSize}
+          </Text>
+          <Text
+            style={[
+              styles.totalMins,
+              isBreak ? styles.totalMinsBreak : isFilled && styles.totalMinsDone,
+            ]}>
+            {record.totalMins.toFixed(2)} min
+          </Text>
+        </View>
+
+        {isFilled && (
+          <Text style={styles.issueText} numberOfLines={1}>
+            {t("issuePrefix")}: {record.idleTimeIssue}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <TouchableOpacity
@@ -37,8 +88,13 @@ function RecordCardBase({ record, onPress }: Props) {
       activeOpacity={0.7}
     >
       <View style={styles.headerRow}>
-        <Text style={styles.workOrder} numberOfLines={1}>
-          #{record.no} · {record.workOrder}
+        {/*
+          การ์ดเดี่ยวไม่แสดงเลขลำดับ เพราะ work order นี้มีรายการเดียว ไม่มีอะไรให้นับ
+          และเลข no เป็นลำดับของทั้งกะ ถ้าแสดงคู่กับเลข 1..n ในกลุ่มจะมีเลขสองชุดปนกันบนจอ
+          ใช้ขนาดเดียวกับหัวกลุ่ม ให้ทุกใบระดับบนสุดขึ้นต้นด้วยเลข work order ตัวใหญ่เหมือนกัน
+        */}
+        <Text style={[styles.workOrder, styles.workOrderTop]} numberOfLines={1}>
+          {record.workOrder}
         </Text>
         <View
           style={[
@@ -55,16 +111,23 @@ function RecordCardBase({ record, onPress }: Props) {
         {record.modelSuffix}
       </Text>
 
-      {/* ช่วงเวลาที่หยุด บอกให้รู้ว่าเกิดตอนไหนของกะโดยไม่ต้องเปิดเข้าไปดู */}
-      <Text style={styles.timeRange}>
-        {record.startTime} - {record.endTime}
-      </Text>
-
+      {/*
+        ช่วงเวลาที่หยุดกับ lot อยู่บรรทัดเดียวกัน ให้การ์ดเตี้ยลงหนึ่งบรรทัด
+        จอหนึ่งเห็นรายการได้มากขึ้น ลีดเดอร์เลื่อนหาน้อยลง
+      */}
       <View style={styles.metaRow}>
-        <Text style={styles.metaText}>
+        <Text style={styles.metaText} numberOfLines={1}>
+          <Text style={styles.timeRange}>
+            {record.startTime} - {record.endTime}
+          </Text>
+          {"  ·  "}
           {t("lotSizeLabel")} {record.lotSize}
         </Text>
-        <Text style={[styles.totalMins, isBreak && styles.totalMinsBreak]}>
+        <Text
+          style={[
+            styles.totalMins,
+            isBreak ? styles.totalMinsBreak : isFilled && styles.totalMinsDone,
+          ]}>
           {record.totalMins.toFixed(2)} min
         </Text>
       </View>
@@ -87,20 +150,42 @@ export default RecordCard;
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
+    /**
+     * แถบสีหนาทางซ้ายบอกสถานะ ใช้หลักเดียวกับจอควบคุมในโรงงาน (ISA-101)
+     * คือสีเต็มใบสงวนไว้ให้รายการที่ยังต้องลงมือทำ ใบที่จบแล้วเหลือแค่แถบสี
+     * เดิมทุกใบมีพื้นสีเต็ม ใบเขียวที่เสร็จแล้วจึงแย่งสายตาจากใบแดงที่ยังค้าง
+     */
     card: {
       backgroundColor: c.surface,
       borderRadius: radius.md,
-      padding: spacing.lg,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
       marginHorizontal: spacing.lg,
-      marginBottom: spacing.md,
+      marginBottom: spacing.sm,
       borderWidth: 1,
+      borderColor: c.border,
+      borderLeftWidth: 6,
       ...elevation.card,
     },
-    /** ยังไม่กรอกสาเหตุ = แดง, กรอกแล้ว = เขียว ใช้โทนที่ปรับมาให้อ่านออกทั้งสองโหมด */
-    cardPending: { backgroundColor: c.cardPendingBg, borderColor: c.danger },
-    cardDone: { backgroundColor: c.badgeDoneBg, borderColor: c.success },
+    cardPending: {
+      backgroundColor: c.cardPendingBg,
+      borderColor: c.danger,
+      borderLeftColor: c.statusPendingFill,
+    },
+    cardDone: { borderLeftColor: c.statusDoneFill },
+    /** การ์ดในกลุ่ม: พื้นปกติทุกสถานะ เหลือแค่แถบซ้ายบอกสี ให้หัวกลุ่มเป็นจุดเด่นเพียงจุดเดียว */
+    nestedCard: {
+      backgroundColor: c.surface,
+      borderRadius: radius.sm,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      marginBottom: spacing.sm,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderLeftWidth: 4,
+    },
     /** ช่วงพัก = เหลือง บอกว่าหยุดจริงแต่เป็นตามแผน ไม่ใช่ปัญหาที่ต้องตามแก้ */
-    cardBreak: { backgroundColor: c.breakBg, borderColor: c.breakAccent },
+    cardBreak: { borderLeftColor: c.statusBreakFill },
     headerRow: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -112,6 +197,7 @@ const createStyles = (c: ThemeColors) =>
       color: c.textPrimary,
       flexShrink: 1,
     },
+    workOrderTop: { fontSize: font.h2 },
     badge: {
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
@@ -123,16 +209,24 @@ const createStyles = (c: ThemeColors) =>
     badgeDone: { backgroundColor: c.statusDoneFill },
     badgePending: { backgroundColor: c.statusPendingFill },
     badgeBreak: { backgroundColor: c.statusBreakFill },
-    badgeText: { fontSize: font.small, fontWeight: "600", color: c.onStatus },
+    badgeText: { fontSize: font.small, fontWeight: "700", color: c.onStatus },
+    badgeOutline: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      borderRadius: radius.pill,
+      borderWidth: 1.5,
+      flexShrink: 0,
+      marginLeft: spacing.sm,
+    },
+    badgeOutlineText: { fontSize: font.small, fontWeight: "700" },
     model: {
       fontSize: font.small,
       color: c.textSecondaryStrong,
       marginTop: spacing.xs,
     },
     timeRange: {
-      fontSize: font.small,
-      color: c.textSecondaryStrong,
-      marginTop: spacing.xs,
+      color: c.textPrimary,
+      fontWeight: "600",
       // ตัวเลขความกว้างเท่ากันทุกหลัก ทำให้เวลาในแต่ละใบเรียงตรงกันเวลากวาดสายตา
       fontVariant: ["tabular-nums"],
     },
@@ -140,11 +234,18 @@ const createStyles = (c: ThemeColors) =>
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
-      // ระยะเท่ากับบรรทัดอื่นในกลุ่มหัวการ์ด ค่า 12 เดิมเป็นของตอนที่ยังไม่มีบรรทัดเวลาคั่น
+      gap: spacing.sm,
       marginTop: spacing.xs,
     },
-    metaText: { fontSize: font.small, color: c.textSecondaryStrong },
-    totalMins: { fontSize: font.body, fontWeight: "700", color: c.danger },
+    metaText: { flexShrink: 1, fontSize: font.small, color: c.textSecondaryStrong },
+    totalMins: {
+      fontSize: font.body,
+      fontWeight: "800",
+      color: c.danger,
+      fontVariant: ["tabular-nums"],
+    },
+    /** กรอกสาเหตุแล้วไม่ต้องเร่งด้วยสีแดงอีก แต่ยังตัวหนาให้อ่านยอดนาทีได้ทันที */
+    totalMinsDone: { color: c.textPrimary },
     /** เวลาที่หยุดในช่วงพักไม่ควรเป็นสีแดง เพราะไม่ได้เป็นเวลาที่เสียไปจริง */
     totalMinsBreak: { color: c.breakAccent },
     issueText: {

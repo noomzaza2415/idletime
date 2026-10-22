@@ -37,8 +37,11 @@ const RECORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 
 export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
-/** จำกัดจำนวนรูปต่อรายการ กันคนกดรัวจนดิสก์เต็ม */
-export const MAX_PHOTOS_PER_RECORD = 20;
+/**
+ * จำกัดจำนวนรูปต่อรายการ ตามที่หน้างานกำหนดไว้ 2 รูป และกันคนกดรัวจนดิสก์เต็ม
+ * ต้องตรงกับ MAX_PHOTOS ในหน้ากรอกสาเหตุของแอป
+ */
+export const MAX_PHOTOS_PER_RECORD = 2;
 
 export function isValidRecordId(value) {
   return typeof value === 'string' && RECORD_ID_PATTERN.test(value);
@@ -154,7 +157,13 @@ export class PhotoStore {
    * บันทึกรูปหนึ่งใบ
    * @returns {{fileName: string, size: number, createdAt: string}}
    */
-  add(recordId, buffer, mimeType, userName, now = new Date()) {
+  add(recordId, buffer, mimeType, userName, cdEquip = null, now = new Date()) {
+    // รองรับ caller เดิมที่ส่ง `now` เป็นอาร์กิวเมนต์ตัวที่ห้า
+    // เพื่อให้การเพิ่ม cdEquip ไม่ทำให้ test หรือ integration รุ่นเก่าตั้งเวลาผิด
+    if (cdEquip instanceof Date) {
+      now = cdEquip;
+      cdEquip = null;
+    }
     const fileName = PhotoStore.buildFileName(recordId, mimeType, now);
     const month = PhotoStore.monthOf(now);
     const dir = join(this.rootDir, month);
@@ -165,6 +174,7 @@ export class PhotoStore {
       fileName,
       size: buffer.length,
       userName: userName ?? null,
+      cdEquip: cdEquip ?? null,
       createdAt: now.toISOString(),
     };
     const list = this.byRecord.get(recordId) ?? [];

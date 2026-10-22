@@ -9,11 +9,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { describeError } from '@/api/app-error';
 import { fetchShiftData } from '@/api/idle-time-service';
 import { addDays, getShiftDateString, shiftTimeOrder } from '@/api/idle-rules';
 import type { LineTimeline } from '@/api/line-timeline';
 import { readPendingPhoto } from '@/api/record-draft';
+import { copyErrorText } from '@/components/error-alert';
 import LineStatusFullscreen from '@/components/line-status-fullscreen';
 import LineStatusTimeline from '@/components/line-status-timeline';
 import LineTabs from '@/components/line-tabs';
@@ -47,6 +50,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const c = useColors();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(c), [c]);
   // กะเริ่ม 08:00 ถ้าเปิดแอปก่อน 8 โมงยังถือเป็นกะของเมื่อวาน
   const [today] = useState(getShiftDateString);
@@ -143,7 +147,7 @@ export default function DashboardScreen() {
    * ไม่วนซ้ำ เพราะ resetBaseline ตั้ง newCount กลับเป็น 0 แล้ว effect รอบถัดไป
    * จะออกตั้งแต่บรรทัดแรก
    *
-   * ทำแบบนี้ได้เพราะรายการถูกกรองให้เหลือเฉพาะที่หยุดเกิน 2 นาทีแล้ว ของใหม่
+   * ทำแบบนี้ได้เพราะรายการถูกกรองให้เหลือเฉพาะที่หยุดเกิน 1 นาทีแล้ว ของใหม่
    * จึงเข้ามาห่างกันพอที่ลิสต์จะไม่ขยับใส่ตอนผู้ใช้กำลังจะกดรายการอื่น
    */
   useEffect(() => {
@@ -162,7 +166,7 @@ export default function DashboardScreen() {
       setError(null);
       load()
         .then(resetBaseline)
-        .catch((e) => setError(e instanceof Error ? e.message : t('loadFailed')))
+        .catch((e) => setError(`${t('loadFailed')}\n${describeError(e, t)}`))
         .finally(() => setLoading(false));
     }, [load])
   );
@@ -173,7 +177,7 @@ export default function DashboardScreen() {
     try {
       resetBaseline(await load());
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('loadFailed'));
+      setError(`${t('loadFailed')}\n${describeError(e, t)}`);
     } finally {
       setRefreshing(false);
     }
@@ -190,6 +194,9 @@ export default function DashboardScreen() {
       ),
     [records, keyword]
   );
+
+  /** นับจากรายการทั้งกะ ไม่ใช่ที่ค้นเจอ ตัวเลขจะได้ไม่ลดลงตอนพิมพ์ค้นหา */
+  const pendingTotal = useMemo(() => records.filter((r) => !r.idleTimeIssue).length, [records]);
 
   /**
    * เปิดหรือปิดกลุ่ม พร้อมเลื่อนกลุ่มที่เพิ่งเปิดขึ้นไปบนสุด
@@ -233,7 +240,15 @@ export default function DashboardScreen() {
       if (shiftTimeOrder(r.startTime) < shiftTimeOrder(g.startTime)) g.startTime = r.startTime;
       if (shiftTimeOrder(r.endTime) > shiftTimeOrder(g.endTime)) g.endTime = r.endTime;
     }
-    return [...byWorkOrder.values()];
+    const groups = [...byWorkOrder.values()];
+    /**
+     * ในกลุ่มเรียงตามเวลาที่เกิดจริง (เช้าก่อน) แล้วนับ 1..n ใหม่บนการ์ดย่อย
+     * เลข no เป็นลำดับของทั้งกะ ถ้าใช้ตรง ๆ กลุ่มจะเริ่มที่ #2 หรือเลขกระโดด ทำให้พนักงานงง
+     */
+    for (const g of groups) {
+      g.records.sort((a, b) => shiftTimeOrder(a.startTime) - shiftTimeOrder(b.startTime));
+    }
+    return groups;
   }, [filtered]);
 
   return (
@@ -278,9 +293,27 @@ export default function DashboardScreen() {
           onSelect={setShiftDate}
           onClose={() => setShowDatePicker(false)}
         />
+
+        {/* เลือกไลน์ก่อน แล้วการ์ดสถานะกับรายการด้านล่างจึงเป็นของไลน์นั้น */}
+        <View style={styles.tabsWrap}>
+          <LineTabs lines={LINES} selected={selectedLine} onSelect={setSelectedLine} />
+        </View>
       </View>
 
-      {error && <Text style={styles.error}>⚠ {error}</Text>}
+      {/* แตะแถบ error เพื่อคัดลอกข้อความทั้งก้อนไปแจ้ง IT เหมือนปุ่ม "คัดลอก" ในกล่องแจ้งเตือน */}
+      {error && (
+        <TouchableOpacity
+          onPress={() => void copyErrorText(error, t)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityHint={t('tapToCopyError')}>
+          <Text style={styles.error}>
+            ⚠ {error}
+            {'\n\n'}
+            <Text style={styles.errorHint}>⧉ {t('tapToCopyError')}</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <NewDataBanner
         count={newCount}
@@ -298,20 +331,47 @@ export default function DashboardScreen() {
             isToday={isToday}
             onPress={() => setTimelineFullscreen(true)}
           />
-          {/* ข้อมูลยังอัปเดตตามรอบ poll ระหว่างเปิดเต็มจอ เพราะรับ timeline ชุดเดียวกับการ์ด */}
-          <LineStatusFullscreen
-            visible={timelineFullscreen}
-            onClose={() => setTimelineFullscreen(false)}
-            timeline={timeline.data}
-            line={selectedLine}
-            isToday={isToday}
-          />
         </>
       )}
 
-      <LineTabs lines={LINES} selected={selectedLine} onSelect={setSelectedLine} />
+      {/*
+        อยู่นอกเงื่อนไขด้านบน เพราะสลับไลน์จากในหน้าเต็มจอได้
+        ระหว่างข้อมูลไลน์ใหม่ยังไม่มา หน้าเต็มจอต้องเปิดค้างพร้อมตัวโหลด ไม่ใช่ปิดตัวเองไป
+        ข้อมูลยังอัปเดตตามรอบ poll ระหว่างเปิดเต็มจอ เพราะรับ timeline ชุดเดียวกับการ์ด
+      */}
+      <LineStatusFullscreen
+        visible={timelineFullscreen}
+        onClose={() => setTimelineFullscreen(false)}
+        timeline={timeline?.key === timelineKey ? timeline.data : null}
+        loading={loading}
+        lines={LINES}
+        line={selectedLine}
+        onLineChange={setSelectedLine}
+        date={shiftDate}
+        isToday={isToday}
+      />
 
       <View style={styles.searchWrap}>
+        {/*
+          สรุปทั้งกะ ไม่ขึ้นกับคำค้นหา ลีดเดอร์รู้ได้ทันทีว่ายังเหลืองานกี่รายการ
+          โดยไม่ต้องเลื่อนนับการ์ดแดงเอง ซ่อนระหว่างโหลดไม่ให้เห็นเลข 0 หลอก ๆ
+        */}
+        {!loading && records.length > 0 && (
+          <View style={styles.summaryRow}>
+            <View
+              style={[
+                styles.summaryChip,
+                pendingTotal > 0 ? styles.summaryChipPending : styles.summaryChipDone,
+              ]}>
+              <Text style={styles.summaryChipText}>
+                {pendingTotal > 0 ? `${pendingTotal} ${t('pendingCount')}` : t('allDone')}
+              </Text>
+            </View>
+            <Text style={styles.summaryText}>
+              {t('summaryTotal').replace('{count}', String(records.length))}
+            </Text>
+          </View>
+        )}
         <SearchField
           value={search}
           onChangeText={setSearch}
@@ -355,17 +415,26 @@ export default function DashboardScreen() {
                   <View
                     style={[
                       styles.groupChildren,
-                      { borderLeftColor: g.pendingCount > 0 ? c.danger : c.success },
+                      g.pendingCount > 0
+                        ? { borderColor: c.danger, borderLeftColor: c.statusPendingFill }
+                        : { borderLeftColor: c.statusDoneFill },
                     ]}>
-                    {g.records.map((r) => (
-                      <RecordCard key={r.id} record={r} onPress={openDetail} />
+                    <Text style={styles.groupChildrenLabel}>
+                      {t('subItems')} · {g.records.length}
+                    </Text>
+                    {g.records.map((r, i) => (
+                      <RecordCard key={r.id} record={r} onPress={openDetail} positionInGroup={i + 1} />
                     ))}
                   </View>
                 )}
               </View>
             );
           }}
-          contentContainerStyle={{ paddingTop: spacing.sm, paddingBottom: spacing.xl }}
+          /* เผื่อความสูงแถบนำทางด้านล่าง ให้การ์ดใบสุดท้ายเลื่อนขึ้นมาพ้นปุ่มนำทางได้ */
+          contentContainerStyle={{
+            paddingTop: spacing.sm,
+            paddingBottom: spacing.xl + insets.bottom,
+          }}
           /*
             จำนวนแถวที่วาดล่วงหน้า ตั้งให้พอดีกับที่เห็นบนจอจริงราว 4-5 ใบ
             ไม่ใช้ removeClippedSubviews เพราะบน Android ทำให้การ์ดกลายเป็นช่องว่างเป็นครั้งคราว
@@ -401,8 +470,8 @@ const createStyles = (c: ThemeColors) =>
   container: { flex: 1, backgroundColor: c.bg },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.sm,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
   },
   headerTitle: { fontSize: font.h1, fontWeight: '700', color: c.textPrimary, letterSpacing: 0.5 },
   dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -431,16 +500,48 @@ const createStyles = (c: ThemeColors) =>
     backgroundColor: c.chipBg,
   },
   todayButtonText: { color: c.primary, fontSize: font.small, fontWeight: '700' },
-  searchWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  tabsWrap: { marginTop: spacing.md },
+  searchWrap: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  summaryChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+  },
+  summaryChipPending: { backgroundColor: c.statusPendingFill },
+  summaryChipDone: { backgroundColor: c.statusDoneFill },
+  summaryChipText: { fontSize: font.small, fontWeight: '800', color: c.onStatus },
+  summaryText: { fontSize: font.small, fontWeight: '600', color: c.textSecondaryStrong },
   /**
-   * เส้นแนวตั้งด้านซ้ายลากจากหัวข้อกลุ่มลงมาคลุมรายการย่อย ทำให้เห็นชัดว่าอยู่ในกลุ่มเดียวกัน
-   * และเว้นระยะท้ายบล็อกให้ห่างจาก work order ใบถัดไปมากกว่าระยะระหว่างการ์ดปกติ
+   * ถาดที่ต่อกรอบลงมาจากหัวกลุ่ม ครอบรายการย่อยทั้งหมดไว้ข้างใน
+   * พื้นถาดใช้สีพื้นจอ ซึ่งต่างจากทั้งหัวกลุ่มและการ์ดย่อย จึงเห็นเป็นสามชั้นชัดเจน
+   * พนักงานจะได้ไม่เข้าใจผิดว่าการ์ดย่อยเป็น work order ใบใหม่
+   * เว้นระยะท้ายถาดให้ห่างจาก work order ใบถัดไปมากกว่าระยะระหว่างการ์ดปกติ
    */
   groupChildren: {
-    marginLeft: spacing.xl,
-    marginBottom: spacing.xxl,
-    borderLeftWidth: 3,
-    paddingTop: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+    backgroundColor: c.bg,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: c.border,
+    borderLeftWidth: 6,
+    borderBottomLeftRadius: radius.md,
+    borderBottomRightRadius: radius.md,
+  },
+  groupChildrenLabel: {
+    fontSize: font.small,
+    fontWeight: '700',
+    color: c.textSecondary,
+    marginBottom: spacing.sm,
   },
   empty: {
     textAlign: 'center',
@@ -460,4 +561,5 @@ const createStyles = (c: ThemeColors) =>
     color: c.danger,
     fontSize: font.small,
   },
+  errorHint: { fontWeight: '700', textDecorationLine: 'underline' },
 });

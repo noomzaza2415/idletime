@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { registerForPushNotifications, type NotificationTarget } from '@/api/push-notifications';
 import { saveDeviceToFirestore } from '@/api/firestore-device';
-import { getNotificationsEnabled } from '@/api/notification-preference';
+import { clearLegacyNotificationSwitch } from '@/api/notification-preference';
 import { registerDeviceToken } from '@/api/register-device';
 import type { IdleTimeRecord } from '@/types';
 
@@ -54,16 +54,15 @@ export function useNewRecordAlert({ fetchLatest, userName, enabled, buildMessage
       const token = await registerForPushNotifications();
       if (cancelled || !token) return;
 
-      // เคารพสวิตช์ปิดแจ้งเตือนที่ผู้ใช้เคยกดไว้ ไม่งั้นการเขียนทับรอบนี้
-      // จะตั้ง active กลับเป็น true แล้วแจ้งเตือนกลับมาเองทุกครั้งที่เปิดแอป
-      const enabled = await getNotificationsEnabled();
+      // แจ้งเตือนเปิดเสมอระหว่างล็อกอิน ไม่มีสวิตช์ให้ปิดแล้ว การเขียนรอบนี้จึงตั้ง active
+      // เป็น true ทุกครั้ง เครื่องที่เคยกดปิดไว้ในแอปรุ่นก่อนจะกลับมาได้แจ้งเตือนเอง
+      await clearLegacyNotificationSwitch();
 
       // เขียนลง Firestore ก่อน เพราะทำได้จากเน็ตอะไรก็ได้ ไม่ต้องอยู่วง LAN
-      const savedToCloud = await saveDeviceToFirestore(token, userName, enabled);
+      const savedToCloud = await saveDeviceToFirestore(token, userName, true);
 
       // ยิงไปที่ notify-server ด้วยเมื่อ Firestore ไม่สำเร็จ เผื่อยังไม่ได้เปิดใช้ Firestore
-      // ข้ามเมื่อผู้ใช้ปิดแจ้งเตือนไว้ เพราะ endpoint นั้นตั้ง active เป็น true เสมอ
-      if (!savedToCloud && enabled) await registerDeviceToken(token, userName);
+      if (!savedToCloud) await registerDeviceToken(token, userName);
     })();
     return () => {
       cancelled = true;

@@ -65,9 +65,14 @@ export class TokenStore {
     return existing ? 'updated' : 'created';
   }
 
-  /** token ทั้งหมดที่ยังส่งได้ */
-  activeTokens() {
-    return [...this.tokens.values()].filter((t) => t.active).map((t) => t.token);
+  /**
+   * เครื่องทั้งหมดที่ยังส่งได้ พร้อม platform เพราะ iPhone ต้องส่งผ่าน APNs ไม่ใช่ FCM
+   * @returns {{token: string, platform: string}[]}
+   */
+  activeDevices() {
+    return [...this.tokens.values()]
+      .filter((t) => t.active)
+      .map((t) => ({ token: t.token, platform: t.platform }));
   }
 
   /**

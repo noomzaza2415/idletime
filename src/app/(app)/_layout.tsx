@@ -1,18 +1,8 @@
 import { Stack } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { useMemo, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { getNotificationsEnabled, setNotificationsEnabled } from '@/api/notification-preference';
 import LanguageButton from '@/components/language-button';
 import ThemeButton from '@/components/theme-button';
 import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
@@ -28,34 +18,9 @@ export default function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const insets = useSafeAreaInsets();
 
-  // สวิตช์ปิดแจ้งเตือน สำหรับตอนออกไปนอกบริษัทแล้วไม่อยากให้มีเสียงเข้า
-  const [notifyOn, setNotifyOn] = useState(true);
-  const [savingNotify, setSavingNotify] = useState(false);
-
-  useEffect(() => {
-    void getNotificationsEnabled().then(setNotifyOn);
-  }, []);
-
   async function handleLogout() {
     setMenuOpen(false);
     await logout();
-  }
-
-  /**
-   * ขยับสวิตช์ให้เห็นผลทันที แล้วค่อยรอผลการบันทึก
-   *
-   * ถ้าบันทึกไม่สำเร็จจะดีดกลับไปค่าเดิมพร้อมบอกเหตุผล ไม่ปล่อยให้สวิตช์
-   * แสดงว่าปิดอยู่ทั้งที่ server ยังส่งแจ้งเตือนมาตามปกติ
-   */
-  async function handleToggleNotify(next: boolean) {
-    setNotifyOn(next);
-    setSavingNotify(true);
-    const saved = await setNotificationsEnabled(next, userName);
-    setSavingNotify(false);
-    if (!saved) {
-      setNotifyOn(!next);
-      Alert.alert(t('notifications'), t('notificationsFailed'));
-    }
   }
 
   return (
@@ -100,27 +65,21 @@ export default function AppLayout() {
         onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)}>
           {/* กันไม่ให้การแตะในแผงเมนูทะลุไปปิด modal */}
-          <Pressable style={[styles.panel, { paddingTop: insets.top + spacing.xl }]}>
+          {/*
+            Modal วาดเต็มจอถึงใต้แถบสถานะและแถบนำทาง ต้องเว้นทั้งบนและล่าง
+            ไม่งั้นปุ่มออกจากระบบจะจมอยู่ใต้ปุ่มนำทางของ Android
+          */}
+          <Pressable
+            style={[
+              styles.panel,
+              { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + spacing.xl },
+            ]}>
             <Text style={styles.appName}>{t('appName')}</Text>
 
             <View style={styles.userBox}>
               <Text style={styles.userLabel}>{t('signedInAs')}</Text>
               <Text style={styles.userName} numberOfLines={2}>
                 {userName ?? '-'}
-              </Text>
-            </View>
-
-            <View style={styles.settingBox}>
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>{t('notifications')}</Text>
-                <Switch
-                  value={notifyOn}
-                  onValueChange={handleToggleNotify}
-                  disabled={savingNotify}
-                />
-              </View>
-              <Text style={styles.settingHint}>
-                {t(notifyOn ? 'notificationsOn' : 'notificationsOff')}
               </Text>
             </View>
 
@@ -136,7 +95,7 @@ export default function AppLayout() {
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    headerActions: { flexDirection: 'row', alignItems: 'center' },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     hamburger: { paddingVertical: spacing.sm, paddingRight: spacing.md, gap: 5 },
     bar: {
       width: 22,
@@ -151,7 +110,6 @@ const createStyles = (c: ThemeColors) =>
       flex: 1,
       backgroundColor: c.surface,
       paddingHorizontal: spacing.lg,
-      paddingBottom: spacing.xl,
       ...elevation.raised,
     },
     appName: {
@@ -174,18 +132,6 @@ const createStyles = (c: ThemeColors) =>
       color: c.primary,
       marginTop: spacing.xs,
     },
-    settingBox: {
-      backgroundColor: c.chipBg,
-      borderRadius: radius.md,
-      padding: spacing.lg,
-    },
-    settingRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    settingLabel: { fontSize: font.body, fontWeight: '700', color: c.textPrimary },
-    settingHint: { fontSize: font.small, color: c.textSecondary, marginTop: spacing.xs },
     logoutButton: {
       marginTop: 'auto',
       minHeight: controlHeight,

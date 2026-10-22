@@ -37,7 +37,17 @@ function fail(res, status, message) {
 
 /** แปลงรายการในคลังให้เป็นรูปแบบที่แอปใช้ได้ทันที คือมี url ให้เอาไปแสดงเลย */
 function toDto(photo) {
-  return { ...photo, url: `${PHOTO_ROUTE}/file/${photo.fileName}` };
+  return { fileName: photo.fileName, url: `${PHOTO_ROUTE}/file/${photo.fileName}` };
+}
+
+/** รูปแบบผลลัพธ์เดียวกันสำหรับการอ่านและอัปโหลดรูปของหนึ่งรายการ */
+function toRecordDto(recordId, photos) {
+  const cdEquip = photos.find((photo) => photo.cdEquip)?.cdEquip ?? null;
+  return {
+    recordId: /^\d+$/.test(recordId) ? Number(recordId) : recordId,
+    cdEquip,
+    photos: photos.map(toDto),
+  };
 }
 
 /**
@@ -73,7 +83,7 @@ export function createPhotoRouter(store) {
   router.get('/:idleTimeId', (req, res) => {
     const { idleTimeId } = req.params;
     if (!isValidRecordId(idleTimeId)) return fail(res, 400, 'id รายการไม่ถูกต้อง');
-    res.json({ isSuccess: true, result: store.list(idleTimeId).map(toDto) });
+    res.json({ isSuccess: true, result: toRecordDto(idleTimeId, store.list(idleTimeId)) });
   });
 
   /** อัปโหลดรูปเข้ารายการหนึ่ง ส่งได้หลายไฟล์ในครั้งเดียวผ่าน field ชื่อ files */
@@ -90,10 +100,11 @@ export function createPhotoRouter(store) {
     }
 
     const userName = typeof req.body?.userName === 'string' ? req.body.userName : null;
-    const saved = files.map((f) => store.add(idleTimeId, f.buffer, f.mimetype, userName));
-    console.log(`รับรูป ${saved.length} ใบ ของรายการ ${idleTimeId} จาก ${userName ?? '-'}`);
+    const cdEquip = typeof req.body?.cdEquip === 'string' ? req.body.cdEquip.slice(0, 100) : null;
+    files.forEach((f) => store.add(idleTimeId, f.buffer, f.mimetype, userName, cdEquip));
+    console.log(`รับรูป ${files.length} ใบ ของรายการ ${idleTimeId} จาก ${userName ?? '-'}`);
 
-    res.json({ isSuccess: true, result: saved.map(toDto) });
+    res.json({ isSuccess: true, result: toRecordDto(idleTimeId, store.list(idleTimeId)) });
   });
 
   /**
