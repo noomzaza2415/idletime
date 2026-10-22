@@ -25,6 +25,13 @@ Format:
 - **Dev loop**: ระหว่างพัฒนาใช้ Metro + debug build, build release เฉพาะตอนแจก APK — `RELEASE.md`
 - **Error messages**: ชั้น network/service โยน `AppError` (รหัส + endpoint + ข้อความ server) หน้าจอแสดงผ่าน `showErrorAlert(title, e, t)` (มีปุ่มคัดลอก) หรือ `describeError(e, t)` เท่านั้น ห้ามแสดง `e.message` ดิบ — `src/api/app-error.ts`, `src/components/error-alert.ts`
 
+## 2026-10-22 — Photo Upload: second photo missing until reopen
+
+- Change: `uploadRecordPhoto` คืนรูปทั้งหมดที่ server ตอบกลับ (เดิมหยิบ `photos[0]`) และ `markSaved` รวมทุกใบ; `reconcileUploader` ล้างรูปใน `saved` ที่ server ไม่มีแล้ว (เฉพาะใบที่รู้ว่าอยู่บน server ก่อนเริ่มขอรายการ)
+- Files: `src/api/photo-store.ts`, `src/api/photo-uploader.ts`, `src/hooks/use-record-photos.ts`
+- Reason: server ตอบรายการเต็มเรียงเก่า→ใหม่ ส่งใบที่สองแล้วได้ใบแรกซ้ำ จอเห็นรูปเดียวจนเปิดหน้าใหม่ / รูปที่ถูกลบจากเครื่องอื่นค้างบนจอจนปิดแอป
+- Do-not-revert: ห้ามกลับไปหยิบรูปใบเดียวจากผลอัปโหลด — ทดสอบบน emulator แล้ว (ถ่าย 2 รูปไม่กดบันทึก เห็น 2/2 และดูเต็มจอได้ 2 / 2)
+
 ## 2026-10-22 — Release 1.1.0
 
 - Change: ขึ้นเวอร์ชัน 1.1.0 (android versionCode 2, ios buildNumber 2); `npx expo install --fix` อัปเดตแพ็กเกจ Expo ให้ตรง SDK 57 (รุ่นย่อยเท่านั้น RN ไม่เปลี่ยน) และเพิ่ม config plugin `expo-image`, `expo-web-browser` ใน app.json

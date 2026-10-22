@@ -139,6 +139,10 @@ const UPLOAD_TIMEOUT_MS = 45_000;
  * ใบที่ส่งเสร็จแล้วอยู่บน server ครบ และไม่ติดเพดาน 10 ไฟล์ต่อครั้งของ server ด้วย
  *
  * ห้ามตั้ง header Content-Type เอง ต้องปล่อยให้ XHR ใส่ boundary ให้
+ *
+ * คืนรูปทั้งหมดของรายการหลังอัปโหลด ไม่ใช่เฉพาะใบที่เพิ่งส่ง เพราะ server ตอบกลับเป็นรายการเต็ม
+ * เรียงจากเก่าไปใหม่ (photo-routes.js ส่ง store.list ทั้งก้อน) เดิมหยิบแค่ photos[0]
+ * พอส่งใบที่สอง ได้ใบแรกกลับมาซ้ำแล้วถูกตัดทิ้งเพราะชื่อไฟล์ซ้ำ จอจึงเห็นแค่ใบเดียวจนกว่าจะเปิดหน้าใหม่
  */
 export function uploadRecordPhoto(
   recordId: string,
@@ -146,7 +150,7 @@ export function uploadRecordPhoto(
   userName?: string | null,
   cdEquip?: string | null,
   onProgress?: (ratio: number) => void
-): Promise<RecordPhoto> {
+): Promise<RecordPhoto[]> {
   const form = new FormData();
   form.append('files', {
     uri,
@@ -176,9 +180,9 @@ export function uploadRecordPhoto(
       } catch {
         // ตอบกลับไม่ใช่ JSON ปล่อยให้ตกไปที่ error ด้านล่าง
       }
-      const saved = body?.result?.photos[0];
-      if (xhr.status >= 200 && xhr.status < 300 && body?.isSuccess && saved) {
-        resolve(toAbsolute(saved));
+      const saved = body?.result?.photos;
+      if (xhr.status >= 200 && xhr.status < 300 && body?.isSuccess && saved && saved.length > 0) {
+        resolve(saved.map(toAbsolute));
         return;
       }
       // 4xx คือ server อ่านคำขอแล้วปฏิเสธ ส่งซ้ำก็ได้ผลเดิม ส่วน 5xx อาจเป็นชั่วคราว

@@ -44,11 +44,13 @@ export function useRecordPhotos(
   const reload = useCallback(async () => {
     setStatus('loading');
     setLoadError(null);
+    // จดเวลาก่อนขอรายการ รูปที่ส่งเสร็จหลังจากนี้อาจยังไม่อยู่ในคำตอบ reconcile จะไม่ล้างใบเหล่านั้น
+    const requestedAt = Date.now();
     try {
       const [list] = await Promise.all([getRecordPhotos(recordId), loadUploader(recordId)]);
       setServerPhotos(list);
       setStatus('ready');
-      reconcileUploader(recordId, list);
+      reconcileUploader(recordId, list, requestedAt);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
       setStatus('error');

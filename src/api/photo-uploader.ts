@@ -53,6 +53,8 @@ const running = new Set<string>();
 const loading = new Map<string, Promise<void>>();
 /** ชื่อผู้ใช้ที่สั่งส่งล่าสุด server จดไว้ว่าใครแนบรูป */
 const senders = new Map<string, string | null | undefined>();
+/** เวลาที่รู้ว่ารูปแต่ละใบอยู่บน server (key = recordId/fileName) ใช้ตัดสินว่ารายการที่โหลดใหม่สดกว่าหรือไม่ */
+const savedAt = new Map<string, number>();
 
 export function getUploaderState(recordId: string): UploaderState {
   return states.get(recordId) ?? EMPTY;
@@ -88,14 +90,19 @@ function patchItem(recordId: string, key: string, patch: Partial<QueuedPhoto>) {
   );
 }
 
-function markSaved(recordId: string, key: string, photo: RecordPhoto) {
+/**
+ * รับได้หลายใบ เพราะผลอัปโหลดคือรูปทั้งหมดของรายการ ไม่ใช่เฉพาะใบที่เพิ่งส่ง
+ * รวมทุกใบที่ยังไม่มี ตัดซ้ำด้วยชื่อไฟล์ ลำดับยังเป็นตามที่ server เรียงไว้ (เก่าไปใหม่)
+ */
+function markSaved(recordId: string, key: string, photos: RecordPhoto[]) {
   const state = getUploaderState(recordId);
   const item = state.queue.find((q) => q.key === key);
   if (item) discardFile(item);
+  const known = new Set(state.saved.map((p) => p.fileName));
+  const now = Date.now();
+  for (const p of photos) savedAt.set(`${recordId}/${p.fileName}`, now);
   update(recordId, {
-    saved: state.saved.some((p) => p.fileName === photo.fileName)
-      ? state.saved
-      : [...state.saved, photo],
+    saved: [...state.saved, ...photos.filter((p) => !known.has(p.fileName))],
   });
   setQueue(
     recordId,
@@ -188,8 +195,23 @@ export function forgetSaved(recordId: string, fileName: string) {
 /**
  * เอารายการรูปล่าสุดจาก server มาเทียบกับรูปที่เคยส่งแล้วไม่รู้ผล
  * ใบที่ server มีแล้วถือว่าส่งสำเร็จ ไม่ต้องส่งซ้ำ
+ *
+ * และล้างรูปใน saved ที่ server ไม่มีแล้ว (ถูกลบจากเครื่องอื่นหรือจากเว็บ) ไม่งั้นค้างบนจอจนปิดแอป
+ * ล้างเฉพาะใบที่รู้ว่าอยู่บน server ก่อน requestedAt (เวลาที่เริ่มขอรายการนี้)
+ * ใบที่ส่งเสร็จระหว่างรอคำตอบอาจยังไม่อยู่ในรายการ ห้ามล้าง
  */
-export function reconcileUploader(recordId: string, serverPhotos: RecordPhoto[]) {
+export function reconcileUploader(
+  recordId: string,
+  serverPhotos: RecordPhoto[],
+  requestedAt: number
+) {
+  const onServer = new Set(serverPhotos.map((p) => p.fileName));
+  const before = getUploaderState(recordId).saved;
+  const kept = before.filter(
+    (p) => onServer.has(p.fileName) || (savedAt.get(`${recordId}/${p.fileName}`) ?? 0) >= requestedAt
+  );
+  if (kept.length !== before.length) update(recordId, { saved: kept });
+
   const state = getUploaderState(recordId);
   const taken = new Set<string>();
   for (const item of state.queue) {
@@ -197,7 +219,7 @@ export function reconcileUploader(recordId: string, serverPhotos: RecordPhoto[])
     const match = findSavedMatch(item, serverPhotos, taken);
     if (match) {
       taken.add(match.fileName);
-      markSaved(recordId, item.key, match);
+      markSaved(recordId, item.key, [match]);
     }
   }
 }
@@ -217,7 +239,7 @@ async function run(recordId: string) {
           const onServer = await getRecordPhotos(recordId);
           const match = findSavedMatch(next, onServer, new Set());
           if (match) {
-            markSaved(recordId, next.key, match);
+            markSaved(recordId, next.key, [match]);
             continue;
           }
         } catch {
