@@ -14,7 +14,7 @@
 
 - Keywords: login, ล็อกอิน, เข้าสู่ระบบ, logout, ออกจากระบบ, token, session
 - Entry: `src/app/sign-in.tsx`
-- Files: `src/app/sign-in.tsx` → ฟอร์มล็อกอิน · `src/context/auth-context.tsx` → state + AsyncStorage · `src/api/idle-time-service.ts` → `login` · `src/api/config.ts` → `AUTH_BASE_URL`, `AUTH_ENDPOINTS`, `USE_MOCK_AUTH`
+- Files: `src/app/sign-in.tsx` → ฟอร์มล็อกอิน (การ์ดโปร่งแสงให้ลายน้ำทะลุ) · `src/components/logo-watermark.tsx` → ลายน้ำโลโก้ทุกหน้า วางครั้งเดียวที่ `src/app/_layout.tsx` ทับเนื้อหา (ไฟล์ `assets/images/dongjin-watermark.png` แปลงพื้นขาวของ `public/icons/โลโก้ดองจิน (1).jpg` เป็นโปร่งใส; ขนาด `WATERMARK_SCALE` × ด้านสั้นของจอ คิดเป็นพิกเซลเพราะ width % เกิน 100 ถูกจำกัด; โหมดมืดย้อมขาวเพราะสีน้ำเงินกลืนพื้น) · `src/context/auth-context.tsx` → state + AsyncStorage · `src/api/idle-time-service.ts` → `login` · `src/api/config.ts` → `AUTH_BASE_URL`, `AUTH_ENDPOINTS`, `USE_MOCK_AUTH`
 - Types: `AuthLoginResult`, `AuthEnvelope` (`src/types/index.ts`)
 - Tests: —
 
@@ -22,7 +22,7 @@
 
 - Keywords: รายการ, list, กะ, shift, ไลน์หยุด, idle time, วันที่, รีเฟรช, Work Order, WO, Model, ค้นหา, search, แท็บไลน์
 - Entry: `src/app/(app)/index.tsx`
-- Files: `src/app/(app)/index.tsx` → เลือกวัน/ไลน์, ค้นหา, จัดกลุ่ม · `src/api/idle-time-service.ts` → `fetchShiftData`, `fetchRecords`, `selectVisible` · `src/components/work-order-group.tsx` → กลุ่มตาม WO · `src/components/record-card.tsx` → การ์ดรายการ · `src/components/line-tabs.tsx` → แท็บไลน์ · `src/components/search-field.tsx` → ช่องค้นหา · `src/components/month-calendar.tsx` → เลือกวัน · `src/api/config.ts` → `toCdEquip`
+- Files: `src/app/(app)/index.tsx` → เลือกวัน/ไลน์, ตัวกรอง ทั้งหมด/ระบุแล้ว/รอระบุ, ค้นหา, จัดกลุ่ม, แถวรายการ (`RecordRow`/`GroupRow`/`TimeBlock`) · `src/api/idle-time-service.ts` → `fetchShiftData`, `fetchRecords`, `selectVisible` · `src/components/line-picker.tsx` → dropdown เลือกไลน์ + `OptionSheet` · `src/components/icons.tsx` → ไอคอน Lucide ของแถบวัน/ไลน์ · `src/components/search-field.tsx` → ช่องค้นหา · `src/components/month-calendar.tsx` → เลือกวัน · `src/api/config.ts` → `toCdEquip`
 - Types: `IdleTimeRecord`, `ApiIdleTimeRecord`, `ApiEnvelope`
 - Tests: —
 
@@ -42,11 +42,18 @@
 - Types: `IdleTimeRecord`, `EditableKey`, `IDLE_ISSUE_OPTIONS`, `TYPE_OPTIONS`, `JUDGE_OPTIONS`, `DEPT_OPTIONS`, `VENDOR_OPTIONS`, `BREAK_TIME_VALUE`
 - Tests: `notify-server/test/idle-rules-sync.test.js` (ตรวจปุ่ม `SHOW_BUTTON` ในหน้านี้)
 
+## Record Edit Lock (กำลังกรอกอยู่)
+
+- Keywords: ล็อก, lock, presence, มีคนกำลังกรอก, กรอกพร้อมกัน, ดูอย่างเดียว
+- Entry: `src/hooks/use-record-lock.ts`
+- Files: `src/hooks/use-record-lock.ts` → จอง/ต่ออายุ/ปล่อยล็อกในหน้ากรอก · `src/api/presence.ts` → เรียก notify-server, `getDeviceId` · `src/app/(app)/record/[id].tsx` → ป้ายเหลือง + ฟอร์มล็อก · `src/app/(app)/index.tsx` → ป้าย "กำลังกรอก" บนแถว (`EditingLabel`, poll 15 วิเฉพาะตอนหน้าอยู่บนจอ) · `notify-server/src/presence.js` → `PresenceStore` (ในหน่วยความจำ, TTL 90 วิ) · `notify-server/src/server.js` → route `/api/v1/Presence` + WebSocket `/api/v1/Presence/ws` (`subscribePresence` ใน `src/api/presence.ts`)
+- Tests: `notify-server/test/presence.test.js`
+
 ## Photo Attachments
 
 - Keywords: รูป, photo, แนบรูป, ถ่ายรูป, กล้อง, upload, อัปโหลด, คิว, queue, ลบรูป, ดูรูป
 - Entry: `src/components/photo-upload-card.tsx`
-- Files: `src/components/photo-upload-card.tsx` → UI เลือก/แสดง/ลบ · `src/components/photo-viewer.tsx` → ดูเต็มจอ · `src/hooks/use-record-photos.ts` → รวมรูปจาก server + คิว · `src/api/photo-uploader.ts` → ตัวส่งระดับแอป · `src/api/photo-queue.ts` → คิวไฟล์ในเครื่อง · `src/api/photo-store.ts` → ย่อรูป, เรียก API รูป · `notify-server/src/photo-routes.js` → route `/api/v1/IdleTime/Photos` · `notify-server/src/photo-store.js` → เก็บไฟล์, จำกัดจำนวน/ขนาด
+- Files: `src/components/photo-upload-card.tsx` → UI เลือก/แสดง/ลบ · `src/components/photo-viewer.tsx` → ดูเต็มจอ · `src/hooks/use-record-photos.ts` → รวมรูปจาก server + คิว · `src/api/photo-uploader.ts` → ตัวส่งระดับแอป · `src/api/photo-queue.ts` → คิวไฟล์ในเครื่อง · `src/api/photo-queue-files.ts` / `.web.ts` → ที่เก็บไฟล์ในคิว (มือถือ: document dir, เว็บ: data URL) · `src/api/photo-store.ts` → ย่อรูป, เรียก API รูป · `notify-server/src/photo-routes.js` → route `/api/v1/IdleTime/Photos` · `notify-server/src/photo-store.js` → เก็บไฟล์, จำกัดจำนวน/ขนาด
 - Types: `RecordPhoto`, `PickedPhoto`, `QueuedPhoto`, `UploaderState`, `PhotoListStatus`, `PhotoTarget`
 - Tests: `notify-server/test/photo-store.test.js`
 
@@ -76,9 +83,9 @@
 
 ## Language / Theme
 
-- Keywords: ภาษา, language, TH, EN, แปล, i18n, ธีม, theme, dark mode, โหมดมืด, สี
+- Keywords: ภาษา, language, TH, EN, KR, เกาหลี, แปล, i18n, ธีม, theme, dark mode, โหมดมืด, สี
 - Entry: `src/context/language-context.tsx`, `src/context/theme-context.tsx`
-- Files: `src/constants/i18n.ts` → ข้อความ `th`/`en` · `src/context/language-context.tsx` → `useT` · `src/components/language-button.tsx` · `src/constants/theme.ts` → `PALETTES`, `spacing`, `radius`, `font`, `elevation` · `src/context/theme-context.tsx` → `useColors` · `src/components/theme-button.tsx`
+- Files: `src/constants/i18n.ts` → ข้อความ `th`/`en`/`ko`, `LANGUAGES`, `LANGUAGE_NAME` · `src/context/language-context.tsx` → `useT` · `src/components/language-button.tsx` → เปิดแผ่นเลือกภาษา · `src/components/line-picker.tsx` → `OptionSheet` (แผ่นตัวเลือกที่ใช้ร่วมกัน) · `src/constants/theme.ts` → `PALETTES`, `spacing`, `radius`, `font`, `elevation` · `src/context/theme-context.tsx` → `useColors` · `src/components/theme-button.tsx`
 - Types: `Language`, `TranslationKey`, `ThemeMode`, `ThemeColors`
 - Tests: —
 
@@ -112,7 +119,7 @@
 | กติกาธุรกิจ pure | `src/api/idle-rules.ts` (ถ้า server ใช้ด้วย → สำเนา `notify-server/src/idle-rules.js`) |
 | เก็บข้อมูลในเครื่อง | `src/api/` แบบเดียวกับ `record-draft.ts` / `photo-queue.ts` |
 | state ข้ามหน้าจอ | `src/context/` |
-| ข้อความใหม่ | `src/constants/i18n.ts` (ทั้ง `th`, `en`) |
+| ข้อความใหม่ | `src/constants/i18n.ts` (ทั้ง `th`, `en`, `ko`) |
 | สี/ระยะ | `src/constants/theme.ts` |
 | field / ตัวเลือก dropdown | `src/types/index.ts` |
 | route/ส่วนใหม่ของ server | `notify-server/src/` + ต่อใน `server.js` |

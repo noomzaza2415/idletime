@@ -1,4 +1,5 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { Platform } from 'react-native';
 
 import { NOTIFY_SERVER_URL } from '@/api/config';
 import { AppError, describeEndpoint } from '@/api/app-error';
@@ -52,9 +53,26 @@ async function readResult<T>(res: Response, method: string): Promise<T> {
   return body.result as T;
 }
 
-/** เดา mime type จากนามสกุลไฟล์ server รับเฉพาะ jpg กับ png */
+/** เดา mime type จากนามสกุลไฟล์ (หรือหัวของ data URL บนเว็บ) server รับเฉพาะ jpg กับ png */
 function mimeOf(uri: string) {
-  return /\.png($|\?)/i.test(uri) ? 'image/png' : 'image/jpeg';
+  return /\.png($|\?)/i.test(uri) || uri.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+}
+
+/**
+ * ส่วนไฟล์ของ multipart
+ *
+ * มือถือส่ง { uri, name, type } ให้ XHR ของ React Native อ่านไฟล์เอง
+ * browser ไม่รู้จักรูปแบบนั้น จะส่งข้อความ "[object Object]" ไปแทนรูป จึงต้องอ่านเป็น Blob ก่อน
+ * ที่อยู่บนเว็บเป็น data URL ไม่มีชื่อไฟล์ให้ตัด จึงตั้งชื่อจาก mime type
+ */
+async function photoPart(uri: string): Promise<{ part: Blob; name: string }> {
+  const type = mimeOf(uri);
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(uri)).blob();
+    return { part: blob, name: type === 'image/png' ? 'photo.png' : 'photo.jpg' };
+  }
+  const name = uri.split('/').pop() || 'photo.jpg';
+  return { part: { uri, name, type } as unknown as Blob, name };
 }
 
 /** ด้านที่ยาวที่สุดของรูปหลังย่อ พอเห็นว่าเครื่องหยุดตรงไหนโดยไม่กินพื้นที่ */
@@ -103,6 +121,9 @@ export async function getRecordPhotos(recordId: string): Promise<RecordPhoto[]> 
  * maybeSaved = true คือส่งข้อมูลออกไปครบแล้วแต่ไม่ได้คำตอบกลับ (timeout หรือ wifi หลุดตอนรอคำตอบ)
  * server อาจบันทึกรูปไปแล้ว ก่อนส่งซ้ำต้องเช็กก่อน ไม่งั้นรายการจะได้รูปเดียวกันสองใบ
  * ส่วน server ตอบกลับมาว่าปฏิเสธ หรือต่อไม่ติดตั้งแต่แรก ถือว่ายังไม่ได้รูปแน่นอน
+ *
+ * message เป็น key ใน i18n (photoErr*) เมื่อแอปรู้สาเหตุเอง จอจะแปลตามภาษาที่เลือก
+ * ถ้าเป็นข้อความที่ server ตอบมา จะแสดงตามที่ได้รับ
  */
 export class PhotoUploadError extends Error {
   readonly maybeSaved: boolean;
@@ -126,7 +147,7 @@ export class PhotoUploadError extends Error {
 const UPLOAD_TIMEOUT_MS = 45_000;
 
 /**
- * ส่งรูปหนึ่งใบแบบ multipart ด้วย XMLHttpRequest ไม่ใช่ fetch
+ * ส่งรูปหนึ่งใบแบบ multipart ด้วย XMLHttpRequest ไม่ใช่ fetch 
  *
  * Expo SDK 57 เปลี่ยน fetch ไปใช้ตัวใหม่ตามมาตรฐาน WinterCG ซึ่งรับเฉพาะ string
  * กับ Blob เท่านั้น พอส่ง { uri, name, type } แบบเดิมเข้าไปจะโยน
@@ -151,15 +172,26 @@ export function uploadRecordPhoto(
   cdEquip?: string | null,
   onProgress?: (ratio: number) => void
 ): Promise<RecordPhoto[]> {
-  const form = new FormData();
-  form.append('files', {
-    uri,
-    name: uri.split('/').pop() || 'photo.jpg',
-    type: mimeOf(uri),
-  } as unknown as Blob);
-  if (userName) form.append('userName', userName);
-  if (cdEquip) form.append('cdEquip', cdEquip);
+  return photoPart(uri).then(
+    ({ part, name }) => {
+      const form = new FormData();
+      form.append('files', part, name);
+      if (userName) form.append('userName', userName);
+      if (cdEquip) form.append('cdEquip', cdEquip);
+      return sendPhotoForm(recordId, form, onProgress);
+    },
+    // อ่านรูปไม่ขึ้นตั้งแต่ก่อนส่ง server ยังไม่ได้อะไรแน่นอน
+    (e) => {
+      throw new PhotoUploadError('photoErrRead', false);
+    }
+  );
+}
 
+function sendPhotoForm(
+  recordId: string,
+  form: FormData,
+  onProgress?: (ratio: number) => void
+): Promise<RecordPhoto[]> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     /** ส่งข้อมูลออกไปครบแล้วหรือยัง ใช้ตัดสินว่า server อาจได้รูปไปแล้วหรือไม่ */
@@ -194,12 +226,12 @@ export function uploadRecordPhoto(
     xhr.onerror = () =>
       reject(
         new PhotoUploadError(
-          sentAll ? 'ขาดการเชื่อมต่อระหว่างรอ server ตอบ' : 'เชื่อมต่อ server ไม่ได้ ตรวจสอบ wifi',
+          sentAll ? 'photoErrDisconnected' : 'photoErrNetwork',
           sentAll
         )
       );
     // หมดเวลาโดยไม่รู้ว่า server รับไปถึงไหน ถือว่าอาจบันทึกแล้วไว้ก่อน
-    xhr.ontimeout = () => reject(new PhotoUploadError('ส่งรูปนานเกินไป', true));
+    xhr.ontimeout = () => reject(new PhotoUploadError('photoErrTimeout', true));
     xhr.send(form);
   });
 }

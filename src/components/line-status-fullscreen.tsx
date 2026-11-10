@@ -1,6 +1,15 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,6 +27,8 @@ import {
   useNow,
   withAlpha,
 } from '@/components/line-status-timeline';
+import { CirclePlayIcon, CircleStopIcon, CoffeeIcon } from '@/components/icons';
+import LinePicker from '@/components/line-picker';
 import type { TranslationKey } from '@/constants/i18n';
 import { font, radius, spacing, type ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/context/language-context';
@@ -41,6 +52,34 @@ interface Props {
 
 /** ขนาดพื้นที่กดของปุ่ม ไม่ต่ำกว่า 44dp ให้กดโดนแม้สวมถุงมือ */
 const TOUCH = 44;
+
+/**
+ * บนเว็บ browser ยอมให้ล็อกจอแนวนอนเฉพาะตอนอยู่ในโหมดเต็มจอ จึงขอเต็มจอก่อนแล้วค่อยล็อก
+ * ต้องเรียกภายในไม่กี่วินาทีหลังผู้ใช้แตะ (เปิดหน้านี้จากการแตะอยู่แล้ว)
+ * Safari บน iPhone ไม่รองรับทั้งสองอย่าง จะตกไปใช้ layout แนวตั้งพร้อมข้อความให้หมุนเครื่องเอง
+ */
+async function lockLandscapeWeb() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+    await (screen.orientation as ScreenOrientationWithLock).lock?.('landscape');
+  } catch {
+    // ล็อกไม่ได้ไม่ใช่ข้อผิดพลาด ยังดูข้อมูลได้ในแนวตั้ง
+  }
+}
+
+function unlockLandscapeWeb() {
+  try {
+    screen.orientation.unlock?.();
+    if (document.fullscreenElement) void document.exitFullscreen();
+  } catch {
+    // ออกจากเต็มจอไม่ได้ ผู้ใช้กดย้อนกลับของ browser ออกเองได้
+  }
+}
+
+/** lib dom ของ TypeScript ตัด lock() ออกเพราะบาง browser ไม่มี */
+type ScreenOrientationWithLock = typeof screen.orientation & {
+  lock?: (o: 'landscape') => Promise<void>;
+};
 
 /** ปุ่มเลือกช่วงเวลา เรียงแบบเดียวกับเว็บ */
 const RANGES: { value: RangeHours; label: TranslationKey }[] = [
@@ -85,7 +124,7 @@ export default function LineStatusFullscreen({
 }: Props) {
   const { colors: c, isDark } = useTheme();
   const { t } = useLanguage();
-  const styles = useMemo(() => createStyles(c), [c]);
+  const styles = useMemo(() => createStyles(c, isDark), [c, isDark]);
   const colors = useMemo(() => statusColors(c, isDark), [c, isDark]);
   const now = useNow(isToday && visible);
 
@@ -94,18 +133,28 @@ export default function LineStatusFullscreen({
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [selected, setSelected] = useState<TimelineSegment | null>(null);
 
+  /** หมุนจอไม่ได้ (iPhone บนเว็บ หรือเครื่องที่ล็อกการหมุนไว้) ใช้ layout แนวตั้งแทนการบีบของแนวนอนลงจอแคบ */
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const portrait = winHeight > winWidth;
+
   useEffect(() => {
     if (!visible) return;
+    if (Platform.OS === 'web') {
+      void lockLandscapeWeb();
+      return unlockLandscapeWeb;
+    }
     // หมุนไม่สำเร็จไม่ควรทำให้ดูข้อมูลไม่ได้ ยังเห็นหน้าเต็มจอในแนวตั้งอยู่
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
     return () => {
-      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(
+        () => {},
+      );
     };
   }, [visible]);
 
   const view = useMemo(
     () => (timeline ? viewTimeline(timeline, now, range) : null),
-    [timeline, now, range]
+    [timeline, now, range],
   );
 
   // ช่วงที่เลือกไว้อาจหายไปเมื่อเปลี่ยนช่วงเวลาหรือข้อมูลอัปเดต ใช้ข้อมูลล่าสุดของ id เดิมเสมอ
@@ -121,6 +170,8 @@ export default function LineStatusFullscreen({
     {
       key: 'running',
       color: colors.running,
+      Icon: CirclePlayIcon,
+      textColor: c.machineRunningText,
       label: t('timelineRunning'),
       value: view ? hoursMinutes(view.runningMins) : dash,
       unit: t('timelineHours'),
@@ -129,6 +180,8 @@ export default function LineStatusFullscreen({
     {
       key: 'stop',
       color: colors.stop,
+      Icon: CircleStopIcon,
+      textColor: c.danger,
       label: t('timelineStop'),
       value: view ? String(Math.round(view.stopMins)) : dash,
       unit: t('timelineMinutes'),
@@ -142,12 +195,138 @@ export default function LineStatusFullscreen({
     {
       key: 'break',
       color: colors.break,
+      Icon: CoffeeIcon,
+      textColor: c.machineBreakText,
       label: t('timelineBreak'),
       value: view ? String(Math.round(view.breakMins)) : dash,
       unit: t('timelineMinutes'),
       sub: view ? times(view.breakCount) : '',
     },
   ];
+
+  /*
+    สลับไลน์ได้ในหน้านี้เลย ไม่ต้องปิด หมุนจอกลับ กดแท็บ แล้วเปิดใหม่
+    ช่วงเวลาและซูมคงไว้ เทียบสองไลน์ในช่วงเดียวกันได้ทันที
+  */
+  /*
+    สลับไลน์ได้ในหน้านี้เลย ไม่ต้องปิด หมุนจอกลับ แล้วเปิดใหม่
+    ช่วงเวลาและซูมคงไว้ เทียบสองไลน์ในช่วงเดียวกันได้ทันที
+    ใช้ dropdown แทนแท็บ เพิ่มไลน์ในอนาคตได้โดยไม่ต้องแก้หน้าตา
+  */
+  const lineTabs = (
+    <LinePicker
+      lines={lines}
+      selected={line}
+      onSelect={(l) => {
+        setSelected(null);
+        onLineChange(l);
+      }}
+      title={t('timelineSelectLine')}
+      compact
+      prominent
+    />
+  );
+
+  const titleBlock = (
+    <View style={styles.headerText}>
+      <Text style={styles.title} numberOfLines={1}>
+        {t('timelineTitle')}
+      </Text>
+      <Text style={styles.subtitle} numberOfLines={1}>
+        {date} · {isToday ? t('shiftToday') : t('shiftPast')}
+      </Text>
+    </View>
+  );
+
+  const rangeTabs = (
+    <View style={styles.segmented}>
+      {RANGES.map((r) => {
+        const active = r.value === range;
+        return (
+          <TouchableOpacity
+            key={r.value}
+            onPress={() => {
+              setRange(r.value);
+              setSelected(null);
+            }}
+            style={[
+              styles.segmentButton,
+              portrait && styles.segmentButtonCompact,
+              active && styles.segmentButtonActive,
+            ]}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: active }}>
+            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+              {t(r.label)}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const zoomControls = (
+    <View style={styles.zoomGroup}>
+      <TouchableOpacity
+        // ปัดแบบเดียวกับปุ่มของเว็บ ซูมด้วยนิ้วค้างไว้ที่ 2.4x กด − ได้ 1x กด + ได้ 3x
+        onPress={() => setZoom((z) => Math.max(Math.floor(z) - 1, MIN_ZOOM))}
+        disabled={zoom <= MIN_ZOOM}
+        style={[styles.zoomButton, zoom <= MIN_ZOOM && styles.disabled]}
+        accessibilityRole="button"
+        accessibilityLabel={t('timelineZoomOut')}>
+        <View style={styles.zoomLine} />
+      </TouchableOpacity>
+      <Text style={styles.zoomValue}>{zoom % 1 === 0 ? zoom : zoom.toFixed(1)}x</Text>
+      <TouchableOpacity
+        onPress={() => setZoom((z) => Math.min(Math.floor(z) + 1, MAX_ZOOM))}
+        disabled={zoom >= MAX_ZOOM}
+        style={[styles.zoomButton, zoom >= MAX_ZOOM && styles.disabled]}
+        accessibilityRole="button"
+        accessibilityLabel={t('timelineZoomIn')}>
+        <View style={styles.zoomLine} />
+        <View style={[styles.zoomLine, styles.zoomLineVertical]} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  /** รายละเอียดช่วงที่แตะ หรือคำแนะนำวิธีใช้ถ้ายังไม่ได้แตะ */
+  const detailContent = current ? (
+    <>
+      <View style={[styles.detailDot, { backgroundColor: colors[current.kind] }]} />
+      <Text style={styles.detailText} numberOfLines={1}>
+        <Text style={styles.detailStrong}>
+          {t(current.kind === 'break' ? 'timelinePlanStop' : 'timelineLineStop')}
+        </Text>
+        {`  ${hhmmss(current.start)} – ${hhmmss(current.end)}  ·  `}
+        <Text style={styles.detailStrong}>
+          {current.mins.toFixed(2)} {t('timelineMinutes')}
+        </Text>
+        {current.status ? `  ·  ${current.status}` : ''}
+      </Text>
+    </>
+  ) : (
+    <Text style={[styles.detailHint, styles.detailHintFlex]} numberOfLines={1}>
+      {t('timelineTapHint')}
+    </Text>
+  );
+
+  /**
+   * แนวนอนไม่มีแถวหัวจอ ไลน์ ชื่อ ปุ่มช่วงเวลา/ซูม และปุ่มปิด อยู่แถวเดียวกันเหนือกราฟ
+   * กราฟจึงได้ความสูงเพิ่ม แนวตั้งยังใช้หัวจอสองแถวเพราะกว้างไม่พอ
+   */
+  const swapLayout = !portrait;
+
+  const closeButton = (
+    <TouchableOpacity
+      onPress={onClose}
+      style={styles.closeButton}
+      accessibilityRole="button"
+      accessibilityLabel={t('timelineClose')}>
+      {/* วาดกากบาทเอง แทนตัวอักษร ✕ ที่บาง font บน Android แสดงไม่ขึ้น */}
+      <View style={[styles.closeLine, styles.closeLineA]} />
+      <View style={[styles.closeLine, styles.closeLineB]} />
+    </TouchableOpacity>
+  );
 
   return (
     <Modal
@@ -167,118 +346,42 @@ export default function LineStatusFullscreen({
         <SafeAreaProvider>
           <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.safeArea}>
             <View style={styles.screen}>
-              <View style={styles.header}>
-                {/*
-                  สลับไลน์ได้ในหน้านี้เลย ไม่ต้องปิด หมุนจอกลับ กดแท็บ แล้วเปิดใหม่
-                  ช่วงเวลาและซูมคงไว้ เทียบสองไลน์ในช่วงเดียวกันได้ทันที
-                */}
-                <View style={styles.segmented} accessibilityRole="radiogroup">
-                  {lines.map((l) => {
-                    const active = l === line;
-                    return (
-                      <TouchableOpacity
-                        key={l}
-                        onPress={() => {
-                          if (active) return;
-                          setSelected(null);
-                          onLineChange(l);
-                        }}
-                        style={[styles.segmentButton, active && styles.segmentButtonActive]}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: active }}>
-                        <Text
-                          style={[styles.lineText, active && styles.segmentTextActive]}>
-                          {l.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                <View style={styles.headerText}>
-                  <Text style={styles.title} numberOfLines={1}>
-                    {t('timelineTitle')}
-                  </Text>
-                  <Text style={styles.subtitle} numberOfLines={1}>
-                    {date} · {isToday ? t('shiftToday') : t('shiftPast')}
-                  </Text>
-                </View>
+              {portrait ? (
+                // แนวตั้งกว้างไม่พอวางทุกปุ่มแถวเดียว แบ่งสองแถว ปุ่มปิดยังอยู่มุมขวาบนที่เดิม
+                <>
+                  <View style={styles.header}>
+                    {lineTabs}
+                    {titleBlock}
+                    {closeButton}
+                  </View>
+                  <View style={[styles.header, styles.headerPortrait]}>
+                    {rangeTabs}
+                    {zoomControls}
+                  </View>
+                </>
+              ) : null}
 
-                <View style={styles.segmented}>
-                  {RANGES.map((r) => {
-                    const active = r.value === range;
-                    return (
-                      <TouchableOpacity
-                        key={r.value}
-                        onPress={() => {
-                          setRange(r.value);
-                          setSelected(null);
-                        }}
-                        style={[styles.segmentButton, active && styles.segmentButtonActive]}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: active }}>
-                        <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                          {t(r.label)}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <View style={styles.zoomGroup}>
-                  <TouchableOpacity
-                    // ปัดแบบเดียวกับปุ่มของเว็บ ซูมด้วยนิ้วค้างไว้ที่ 2.4x กด − ได้ 1x กด + ได้ 3x
-                    onPress={() => setZoom((z) => Math.max(Math.floor(z) - 1, MIN_ZOOM))}
-                    disabled={zoom <= MIN_ZOOM}
-                    style={[styles.zoomButton, zoom <= MIN_ZOOM && styles.disabled]}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('timelineZoomOut')}>
-                    <View style={styles.zoomLine} />
-                  </TouchableOpacity>
-                  <Text style={styles.zoomValue}>{zoom % 1 === 0 ? zoom : zoom.toFixed(1)}x</Text>
-                  <TouchableOpacity
-                    onPress={() => setZoom((z) => Math.min(Math.floor(z) + 1, MAX_ZOOM))}
-                    disabled={zoom >= MAX_ZOOM}
-                    style={[styles.zoomButton, zoom >= MAX_ZOOM && styles.disabled]}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('timelineZoomIn')}>
-                    <View style={styles.zoomLine} />
-                    <View style={[styles.zoomLine, styles.zoomLineVertical]} />
-                  </TouchableOpacity>
-                </View>
-
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={styles.closeButton}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('timelineClose')}>
-                  {/* วาดกากบาทเอง แทนตัวอักษร ✕ ที่บาง font บน Android แสดงไม่ขึ้น */}
-                  <View style={[styles.closeLine, styles.closeLineA]} />
-                  <View style={[styles.closeLine, styles.closeLineB]} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.stats}>
+              {/* แนวตั้งเรียงการ์ดลงมา แต่ละใบกว้างเต็มจอ ตัวเลขและบรรทัดรองไม่ถูกตัด */}
+              <View style={[styles.stats, portrait && styles.statsPortrait]}>
                 {stats.map((s) => (
-                  <View
-                    key={s.key}
-                    style={[
-                      styles.stat,
-                      // พื้นและขอบย้อมสีตามสถานะ ให้แยกช่องได้ด้วยสีแวบเดียวโดยไม่ต้องอ่านหัวข้อ
-                      {
-                        backgroundColor: withAlpha(s.color, isDark ? 0.16 : 0.1),
-                        borderColor: withAlpha(s.color, isDark ? 0.45 : 0.35),
-                      },
-                    ]}>
+                  /*
+                    การ์ดพื้นขาว เงานุ่ม ไม่มีเส้นขอบ (ผู้ใช้ขอสไตล์ Modern Industrial + iOS 2026-11-10)
+                    แยกสถานะด้วยไอคอนในวงสี แถบสีด้านบน และหัวข้อสีเข้มโทนเดียวกัน
+                  */
+                  <View key={s.key} style={styles.stat}>
                     <View style={[styles.statAccent, { backgroundColor: s.color }]} />
                     <View style={styles.statHead}>
-                      <Text style={[styles.statLabel, { color: s.color }]} numberOfLines={1}>
+                      <View
+                        style={[
+                          styles.statIcon,
+                          { backgroundColor: withAlpha(s.color, isDark ? 0.22 : 0.18) },
+                        ]}>
+                        <s.Icon color={s.textColor} size={20} strokeWidth={2.4} />
+                      </View>
+                      {/* หัวข้อสีเข้มโทนเดียวกัน สีสดบนพื้นอ่อนอ่านไม่ออก (ผู้ใช้ทัก 2026-11-10) */}
+                      <Text style={[styles.statLabel, { color: s.textColor }]} numberOfLines={1}>
                         {s.label}
                       </Text>
-                      {s.note && view && (
-                        <Text style={styles.statNote} numberOfLines={1}>
-                          {s.note}
-                        </Text>
-                      )}
                     </View>
                     {/* ตัวเลขชิดซ้าย บรรทัดรองชิดขวาในแถวเดียวกัน ให้เนื้อหาเต็มความกว้างของช่อง */}
                     <View style={styles.statBody}>
@@ -294,29 +397,32 @@ export default function LineStatusFullscreen({
                 ))}
               </View>
 
-              <View style={styles.chart}>
+              <View style={[styles.chart, portrait ? styles.chartPortrait : styles.chartLandscape]}>
                 {/* สูงคงที่ ไม่ว่าจะมีรายละเอียดหรือไม่ แถบด้านล่างจะได้ไม่ขยับขึ้นลงตอนแตะ */}
-                <View style={styles.detailRow}>
-                  {current ? (
-                    <>
-                      <View style={[styles.detailDot, { backgroundColor: colors[current.kind] }]} />
-                      <Text style={styles.detailText} numberOfLines={1}>
-                        <Text style={styles.detailStrong}>
-                          {t(current.kind === 'break' ? 'timelinePlanStop' : 'timelineLineStop')}
-                        </Text>
-                        {`  ${hhmmss(current.start)} – ${hhmmss(current.end)}  ·  `}
-                        <Text style={styles.detailStrong}>
-                          {current.mins.toFixed(2)} {t('timelineMinutes')}
-                        </Text>
-                        {current.status ? `  ·  ${current.status}` : ''}
-                      </Text>
-                    </>
-                  ) : (
-                    <Text style={styles.detailHint} numberOfLines={1}>
-                      {t('timelineTapHint')}
-                    </Text>
-                  )}
-                </View>
+                {swapLayout ? (
+                  // ไลน์ ชื่อ ปุ่มช่วงเวลาและซูม อยู่แถวเดียวกันติดกับกราฟที่มันควบคุม
+                  <View style={styles.chartToolbar}>
+                    {lineTabs}
+                    {/*
+                      แตะช่วงบนกราฟแล้วรายละเอียดขึ้นแทนชื่อหน้า เพราะตอนนั้นผู้ใช้สนใจช่วงที่แตะมากกว่า
+                      แตะส่วนที่เดินงานอยู่เพื่อยกเลิก แล้วชื่อหน้าจะกลับมา ความสูงแถวเท่าเดิม กราฟไม่ขยับ
+                    */}
+                    {current ? (
+                      <View style={[styles.detailRow, styles.detailInToolbar]}>
+                        {detailContent}
+                      </View>
+                    ) : (
+                      titleBlock
+                    )}
+                    {rangeTabs}
+                    {zoomControls}
+                    {/* ปุ่มปิดอยู่ท้ายแถวเครื่องมือ มุมขวาบนตามที่คนคุ้น ปุ่ม back ของ Android ก็ปิดได้ */}
+                    <View style={styles.toolbarDivider} />
+                    {closeButton}
+                  </View>
+                ) : (
+                  <View style={styles.detailRow}>{detailContent}</View>
+                )}
 
                 {view ? (
                   <TimelineBar
@@ -330,10 +436,14 @@ export default function LineStatusFullscreen({
                     maxZoom={MAX_ZOOM}
                     selectedId={current?.id ?? null}
                     onSelect={setSelected}
-                    style={styles.chartBar}
+                    style={portrait ? styles.chartBar : styles.chartBarLandscape}
                   />
                 ) : (
-                  <View style={[styles.chartBar, styles.chartPlaceholder]}>
+                  <View
+                    style={[
+                      portrait ? styles.chartBar : styles.chartBarLandscape,
+                      styles.chartPlaceholder,
+                    ]}>
                     {loading ? (
                       <ActivityIndicator color={c.primary} size="large" />
                     ) : (
@@ -341,7 +451,22 @@ export default function LineStatusFullscreen({
                     )}
                   </View>
                 )}
+
+                {/* คำอธิบายสีใต้กราฟ ให้รู้ทันทีว่าเขียว/แดง/เหลืองคืออะไร ไม่ต้องย้อนไปดูการ์ดด้านบน */}
+                <View style={styles.legend}>
+                  {stats.map((s) => (
+                    <View key={s.key} style={styles.legendItem}>
+                      <View style={[styles.legendSwatch, { backgroundColor: s.color }]} />
+                      <Text style={styles.legendText}>
+                        {s.label}
+                        {/* หมายเหตุของช่องหยุดอยู่ตรงนี้ เดิมอยู่หัวการ์ดแล้วถูกตัดเพราะไอคอนกินที่ */}
+                        {s.note && view ? <Text style={styles.legendNote}> ({s.note})</Text> : null}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
+              {portrait && <Text style={styles.rotateHint}>{t('timelineRotateHint')}</Text>}
             </View>
           </SafeAreaView>
         </SafeAreaProvider>
@@ -350,10 +475,29 @@ export default function LineStatusFullscreen({
   );
 }
 
-const createStyles = (c: ThemeColors) =>
+/** ความสูงแถบกราฟแนวนอน รวมแถวป้ายเวลาด้านบน */
+const LANDSCAPE_BAR_HEIGHT = 150;
+
+/**
+ * เงานุ่มแทนเส้นขอบ (ผู้ใช้ขอ 2026-11-10) โหมดมืดเงามองไม่เห็นบนพื้นเข้ม จึงคงเส้นขอบบาง ๆ ไว้แทน
+ */
+const softCard = (c: ThemeColors, isDark: boolean) => ({
+  backgroundColor: c.surface,
+  borderRadius: radius.lg,
+  ...(isDark
+    ? { borderWidth: 1, borderColor: c.border }
+    : // boxShadow โค้งตามมุมการ์ด shadow*/elevation เดิมวาดเป็นกรอบเทาเหลี่ยมบน Android (พบ 2026-11-10)
+      { boxShadow: '0px 4px 14px rgba(15, 23, 42, 0.08)' }),
+});
+
+/** รางของปุ่มแบบ segmented */
+const trackColor = (c: ThemeColors, isDark: boolean) => (isDark ? c.chipBg : '#EEF2F7');
+
+const createStyles = (c: ThemeColors, isDark: boolean) =>
   StyleSheet.create({
     gestureRoot: { flex: 1 },
-    safeArea: { flex: 1, backgroundColor: c.bg },
+    /** พื้นขาวนวล (slate-50) ให้การ์ดขาวลอยขึ้นมาด้วยเงา โหมดมืดใช้พื้นของธีม */
+    safeArea: { flex: 1, backgroundColor: isDark ? c.bg : '#F8FAFC' },
     /** ระยะเว้นรอบเนื้อหา บวกเพิ่มจากระยะขอบของระบบที่ SafeAreaView เว้นให้แล้ว */
     screen: {
       flex: 1,
@@ -363,18 +507,18 @@ const createStyles = (c: ThemeColors) =>
       paddingBottom: spacing.sm,
     },
     header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    /** ชื่อไลน์ตัวใหญ่และหนากว่าปุ่มช่วงเวลา เพราะเป็นสิ่งแรกที่ต้องรู้ว่ากำลังดูไลน์ไหน */
-    lineText: { fontSize: font.body, fontWeight: '800', letterSpacing: 1, color: c.textSecondary },
+    /** จอ 320px ปุ่มช่วงเวลากับปุ่มซูมต้องพอดีแถวเดียว */
+    headerPortrait: { gap: spacing.sm },
+    segmentButtonCompact: { paddingHorizontal: spacing.sm },
     headerText: { flex: 1 },
-    title: { fontSize: font.h2, fontWeight: '800', color: c.textPrimary },
+    title: { fontSize: font.h2, fontWeight: '800', letterSpacing: -0.2, color: c.textPrimary },
     subtitle: { fontSize: font.small, color: c.textSecondary, marginTop: 1 },
+    /** กลุ่มปุ่มแบบ segmented ของ iOS: รางสีเทาอ่อน ปุ่มที่เลือกเป็นเม็ดสีขาวมีเงา ไม่มีเส้นขอบ */
     segmented: {
       flexDirection: 'row',
       padding: 3,
       borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: c.border,
-      backgroundColor: c.surface,
+      backgroundColor: trackColor(c, isDark),
     },
     segmentButton: {
       minHeight: TOUCH - 6,
@@ -383,17 +527,18 @@ const createStyles = (c: ThemeColors) =>
       justifyContent: 'center',
       borderRadius: radius.sm,
     },
-    segmentButtonActive: { backgroundColor: c.primary },
+    segmentButtonActive: {
+      backgroundColor: c.surface,
+      boxShadow: '0px 1px 4px rgba(15, 23, 42, 0.14)',
+    },
     segmentText: { fontSize: font.small, fontWeight: '700', color: c.textSecondary },
-    segmentTextActive: { color: c.onPrimary },
+    segmentTextActive: { color: c.primary, fontWeight: '800' },
     zoomGroup: {
       flexDirection: 'row',
       alignItems: 'center',
       padding: 3,
       borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: c.border,
-      backgroundColor: c.surface,
+      backgroundColor: trackColor(c, isDark),
     },
     zoomButton: {
       width: TOUCH - 6,
@@ -420,13 +565,14 @@ const createStyles = (c: ThemeColors) =>
       color: c.textPrimary,
     },
     disabled: { opacity: 0.3 },
+    /** ปุ่มปิดเป็นวงกลมพื้นเทาอ่อนแบบ iOS เห็นชัดว่าเป็นปุ่ม */
     closeButton: {
       width: TOUCH,
       height: TOUCH,
-      marginRight: -spacing.sm,
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: radius.pill,
+      backgroundColor: trackColor(c, isDark),
     },
     closeLine: {
       position: 'absolute',
@@ -438,25 +584,38 @@ const createStyles = (c: ThemeColors) =>
     closeLineA: { transform: [{ rotate: '45deg' }] },
     closeLineB: { transform: [{ rotate: '-45deg' }] },
     stats: { flexDirection: 'row', gap: spacing.md },
+    statsPortrait: { flexDirection: 'column', gap: spacing.sm },
     stat: {
       flex: 1,
-      paddingVertical: spacing.xs,
-      paddingLeft: spacing.lg,
-      paddingRight: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      overflow: 'hidden',
+      paddingTop: spacing.sm + 2,
+      paddingBottom: spacing.xs,
+      paddingHorizontal: spacing.md,
+      ...softCard(c, isDark),
     },
-    /** แถบสีด้านซ้าย บอกว่าตัวเลขช่องนี้เป็นของสถานะไหน ตรงกับสีบนแถบเวลา */
-    statAccent: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 6 },
+    /** แถบสีบางด้านบนการ์ด บอกว่าตัวเลขช่องนี้เป็นของสถานะไหน ตรงกับสีบนแถบเวลา */
+    statAccent: {
+      position: 'absolute',
+      left: spacing.md,
+      right: spacing.md,
+      top: 0,
+      height: 3,
+      borderBottomLeftRadius: 3,
+      borderBottomRightRadius: 3,
+    },
     statHead: {
       flexDirection: 'row',
-      alignItems: 'baseline',
-      justifyContent: 'space-between',
+      alignItems: 'center',
       gap: spacing.sm,
     },
-    statLabel: { fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
-    statNote: { flexShrink: 1, fontSize: 12, color: c.textSecondary, textAlign: 'right' },
+    /** ไอคอนสถานะในวงสีอ่อน แยกการ์ดได้แวบเดียวโดยไม่ต้องอ่าน */
+    statIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    statLabel: { flex: 1, fontSize: 15, fontWeight: '800', letterSpacing: 0.3 },
     statBody: {
       flexDirection: 'row',
       alignItems: 'baseline',
@@ -466,9 +625,10 @@ const createStyles = (c: ThemeColors) =>
     /** ตัวเลขใหญ่พอให้อ่านได้จากระยะแขน เวลาถือมือถือให้คนอื่นดูหรือวางไว้ข้างไลน์ */
     statValueRow: { flexShrink: 0 },
     statValue: {
-      fontSize: 40,
-      lineHeight: 46,
+      fontSize: 42,
+      lineHeight: 48,
       fontWeight: '800',
+      letterSpacing: -1,
       fontVariant: ['tabular-nums'],
       color: c.textPrimary,
     },
@@ -482,15 +642,21 @@ const createStyles = (c: ThemeColors) =>
       color: c.textSecondaryStrong,
     },
     chart: {
-      flex: 1,
       paddingHorizontal: spacing.md,
       paddingTop: spacing.sm,
-      paddingBottom: spacing.md,
-      borderRadius: radius.lg,
-      borderWidth: 1,
-      borderColor: c.border,
-      backgroundColor: c.surface,
+      paddingBottom: spacing.sm,
+      ...softCard(c, isDark),
     },
+    legend: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: spacing.lg,
+      marginTop: spacing.sm,
+    },
+    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    legendSwatch: { width: 14, height: 14, borderRadius: 4 },
+    legendText: { fontSize: font.small, fontWeight: '700', color: c.textSecondaryStrong },
+    legendNote: { fontWeight: '400', color: c.textSecondary },
     detailRow: {
       height: 26,
       flexDirection: 'row',
@@ -498,6 +664,22 @@ const createStyles = (c: ThemeColors) =>
       gap: spacing.sm,
       marginBottom: spacing.xs,
     },
+    /** สูงพอให้ปุ่มขนาด TOUCH อยู่ในแถวได้ ข้อความยังอยู่ซ้าย ปุ่มชิดขวา */
+    /** แนวนอน: รายละเอียดช่วงที่แตะ อยู่ในช่องของชื่อหน้า กินที่ว่างระหว่าง dropdown กับปุ่มช่วงเวลา */
+    detailInToolbar: { flex: 1, height: TOUCH, marginBottom: 0 },
+    toolbarDivider: {
+      width: 1,
+      alignSelf: 'stretch',
+      marginVertical: spacing.xs,
+      backgroundColor: c.border,
+    },
+    chartToolbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      marginBottom: spacing.sm,
+    },
+    detailHintFlex: { flexShrink: 1 },
     detailDot: { width: 10, height: 10, borderRadius: 5 },
     detailText: {
       flexShrink: 1,
@@ -508,5 +690,14 @@ const createStyles = (c: ThemeColors) =>
     detailStrong: { fontWeight: '800', color: c.textPrimary },
     detailHint: { fontSize: font.small, color: c.textSecondary },
     chartBar: { flex: 1 },
+    /** แนวตั้งกล่องแถบไม่ต้องยืดเต็มความสูงที่เหลือ สูงเท่านี้แตะช่วงได้ง่ายและยังเห็นการ์ดด้านบน */
+    /**
+     * แนวนอน: เดิมยืดเต็มความสูงที่เหลือ แถบสูงเกินดูไม่สวย (ผู้ใช้ขอลด 2026-11-10)
+     * กล่องสูงตามเนื้อหา แถบสูงคงที่ จอเตี้ยกว่าที่คิดยังหดได้ไม่ล้นจอ
+     */
+    chartLandscape: { flexShrink: 1 },
+    chartBarLandscape: { height: LANDSCAPE_BAR_HEIGHT, flexShrink: 1 },
+    chartPortrait: { height: 280 },
+    rotateHint: { fontSize: font.small, color: c.textSecondary, textAlign: 'center' },
     chartPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   });

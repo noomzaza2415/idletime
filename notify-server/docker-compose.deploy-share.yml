@@ -21,6 +21,8 @@ services:
       # แยกกันแบบนี้เพื่อไม่ให้ต้อง mount ซ้อนกัน และถ้าเครื่อง 188 ล่ม
       # ข้อมูลอ้างอิงว่ารูปไหนของรายการไหนก็ยังไม่หายไปด้วย
       PHOTO_DIR: /app/photos
+      # แอปฉบับเว็บ เปิดผ่าน browser ที่ http://192.168.2.222:8090/ (ดู DEPLOY.md ส่วนที่ 4)
+      WEB_DIR: /app/web
 
     env_file:
       - .env
@@ -33,6 +35,8 @@ services:
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
       # กุญแจ APNs สำหรับส่งแจ้งเตือนเข้า iPhone (AuthKey.p8) ไม่มีไฟล์ก็เริ่มบริการได้ Android ใช้ได้ตามปกติ
       - ./apns:/app/apns:ro
+      # ไฟล์จาก `npx expo export --platform web` (โฟลเดอร์ dist ของแอป) ไม่มีก็เริ่มบริการได้ แค่เปิดหน้าเว็บไม่ขึ้น
+      - ./web:/app/web:ro
 
     logging:
       driver: json-file

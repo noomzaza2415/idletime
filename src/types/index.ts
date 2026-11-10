@@ -112,15 +112,31 @@ export interface ApiEnvelope<T> {
   result: T;
 }
 
-// ตัวเลือกสาเหตุมาตรฐาน — แก้ไข/โหลดจาก API จริงได้ภายหลัง
-export const IDLE_ISSUE_OPTIONS = [
-  'รอวัตถุดิบ',
-  'เครื่องเสีย',
-  'รอปรับตั้งเครื่อง (Setup)',
-  'รอ QC ตรวจสอบ',
-  'ขาดพนักงาน',
-  'พักเบรก',
-  'อื่นๆ',
+export interface IdleIssueOption {
+  en: string;
+  th: string;
+}
+
+/**
+ * สาเหตุการหยุดที่ให้เลือก ตามตารางที่เจ้าของโปรเจกต์ให้มา (2026-11-09) เรียงตามตาราง
+ * ค่าที่บันทึกขึ้นกับภาษาที่เลือกในแอป: ไทยบันทึกชื่อไทย อังกฤษ/เกาหลีบันทึกชื่ออังกฤษ
+ * ตัวสะกดอังกฤษคงตามตารางต้นฉบับ (Trainning, Planed, cercuit) เพราะอาจเป็นค่าที่รายงานเดิมใช้อยู่
+ * สาเหตุที่ไม่มีในรายการให้พิมพ์ในช่อง Remark
+ */
+export const IDLE_ISSUE_OPTIONS: IdleIssueOption[] = [
+  { en: 'Trainning/Meeting', th: 'อบรม/ประชุม' },
+  { en: 'Planed Shut Down', th: 'หยุดตามแผน' },
+  { en: 'Electric Short cercuit', th: 'ไฟฟ้าช็อต' },
+  { en: 'Quality', th: 'คุณภาพ' },
+  { en: 'Machine Error', th: 'เครื่องเสีย' },
+  { en: 'Change over Tool', th: 'เปลี่ยนเครื่องมือ' },
+  { en: 'Change Model', th: 'เปลี่ยนรุ่น' },
+  { en: 'Daily Maintenance', th: 'บำรุงรักษาประจำวัน' },
+  { en: 'Shortage Material', th: 'วัตถุดิบส่งไม่ทัน' },
+  { en: 'Shortage Cart', th: 'ไม่มีแร็ก' },
+  { en: 'Shortage Area', th: 'ไม่มีพื้นที่วาง' },
+  { en: 'Rework in Line', th: 'ซ่อมบนไลน์' },
+  { en: 'Others', th: 'อื่นๆ' },
 ];
 
 /**

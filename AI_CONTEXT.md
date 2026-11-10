@@ -140,7 +140,7 @@ src/app ──→ src/components ──→ src/context, src/constants
 
 | ประเภทปัญหา | Layer → ที่ไปดู |
 | --- | --- |
-| หน้าตาชิ้นส่วน (การ์ด, แท็บ, ค้นหา, ปฏิทิน, timeline) | UI → `src/components/` |
+| หน้าตาชิ้นส่วน (dropdown ไลน์, ค้นหา, ปฏิทิน, timeline) | UI → `src/components/` · แถวรายการ → `src/app/(app)/index.tsx` |
 | พฤติกรรมหน้าจอ, navigation | UI → `src/app/` |
 | รายการไหนแสดง/ซ่อน, ช่วงพัก, เวลากะ | Business Logic → `src/api/idle-rules.ts` + สำเนา server (Rule 14) |
 | ดึง/บันทึกข้อมูล, conflict, login | API → `src/api/idle-time-service.ts` |
@@ -209,7 +209,7 @@ src/app ──→ src/components ──→ src/context, src/constants
 ## Known Risks
 
 - **ไม่มี test ฝั่งแอป** — ทุกอย่างใน `src/` ตรวจได้แค่ typecheck + มือ
-- **ไฟล์ใหญ่**: `src/app/(app)/record/[id].tsx` (~800), `src/components/line-status-timeline.tsx` (~570), `src/app/(app)/index.tsx` (~510), `src/components/photo-upload-card.tsx` (~500), `src/api/idle-time-service.ts` (~470), `notify-server/src/server.js` (~400)
+- **ไฟล์ใหญ่**: `src/app/(app)/record/[id].tsx` (~800), `src/components/line-status-timeline.tsx` (~570), `src/app/(app)/index.tsx` (~900), `src/components/photo-upload-card.tsx` (~500), `src/api/idle-time-service.ts` (~470), `notify-server/src/server.js` (~400)
 - **ถูกเรียกจากหลายที่**: `src/api/idle-rules.ts`, `src/api/http.ts`, `src/constants/i18n.ts`, `src/constants/theme.ts`, `src/types/index.ts`
 - **กติกาซ้ำสองที่** (Rule 14) — กันด้วย `idle-rules-sync.test.js` เท่านั้น
 - **URL/IP ฝังในโค้ด** `src/api/config.ts` — เปลี่ยนเครื่อง server ต้อง build แอปใหม่

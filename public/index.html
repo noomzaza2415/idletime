@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%" translate="no">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <!--
+      viewport-fit=cover ให้แอปขยายถึงใต้แถบกระจกของ Safari และรอยบาก แถบจึงดูโปร่งเห็นแอปข้างใต้ แทนพื้นทึบ
+      ปุ่มกับหัวหน้าจอไม่จม เพราะแอปเว้นระยะตาม safe area (react-native-safe-area-context อ่าน env(safe-area-inset-*))
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <!-- หน้าจอสลับไทย/อังกฤษได้ในแอปเอง ห้าม browser แปลทับ: การแปลอัตโนมัติเขียน DOM ทับจน React พัง -->
+    <meta name="google" content="notranslate" />
+    <!-- ไอคอนตอน "เพิ่มลงหน้าจอหลัก" ใช้รูปเดียวกับแอปมือถือ (สร้างจาก assets/images/icon.png) -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-v3.png" />
+    <!-- ค่าเริ่มต้นตามธีมมืด (ค่าเริ่มต้นของแอป) ตอนแอปโหลดแล้ว _layout.tsx ตั้งใหม่ตามธีมที่เลือก -->
+    <meta name="theme-color" content="#1D2A45" />
+    <!-- iPhone เปิดจากไอคอนแบบเต็มจอไม่มีแถบ Safari แอปมีปุ่มย้อนกลับของตัวเองอยู่แล้ว -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Idle Time" />
+    <!-- เปิดจากไอคอนบน iPhone แถบสถานะ (เวลา/แบต) โปร่งใสซ้อนบนหัวหน้าจอของแอป -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+        /* ให้แถบของ browser ไม่เป็นสีขาวระหว่างรอ JS โหลด */
+        background-color: #141E33;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

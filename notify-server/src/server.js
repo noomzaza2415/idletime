@@ -1,10 +1,14 @@
+import path from 'node:path';
+
 import express from 'express';
+import { WebSocketServer } from 'ws';
 
 import { APNS_PRODUCTION_ORIGIN, APNS_SANDBOX_ORIGIN, ApnsSender, splitDevices } from './apns.js';
 import { FcmSender } from './fcm.js';
 import { FirestoreStore } from './firestore-store.js';
 import { createPhotoRouter, PHOTO_ROUTE } from './photo-routes.js';
 import { PhotoStore } from './photo-store.js';
+import { cleanField, PresenceStore } from './presence.js';
 import { TokenStore } from './store.js';
 import { IdleTimeWatcher } from './watcher.js';
 
@@ -18,6 +22,11 @@ const DATA_FILE = process.env.DATA_FILE ?? './data/tokens.json';
  */
 const PHOTO_DIR = process.env.PHOTO_DIR ?? './data/photos';
 const PHOTO_INDEX = process.env.PHOTO_INDEX ?? './data/photos.json';
+/**
+ * โฟลเดอร์ของแอปฉบับเว็บ (ผลจาก `npx expo export --platform web` ที่ root ของรีโป)
+ * ตั้งไว้เมื่อต้องการให้เปิดแอปผ่าน browser ที่ http://<server>:8090/ ได้ ไม่ตั้งก็ไม่เสิร์ฟ
+ */
+const WEB_DIR = process.env.WEB_DIR;
 const SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT ?? './firebase-service-account.json';
 
 /** API ของ Idle Time ที่ watcher จะไปถามหารายการใหม่ */
@@ -97,6 +106,24 @@ const store = new TokenStore(DATA_FILE);
 /** @type {IdleTimeWatcher | null} */
 let watcher = null;
 const photos = new PhotoStore(PHOTO_DIR, PHOTO_INDEX);
+/** ล็อกหน้ากรอกสาเหตุ อยู่ในหน่วยความจำเท่านั้น ดู presence.js */
+const presence = new PresenceStore({ onChange: (date) => broadcastPresence(date) });
+
+/**
+ * เครื่องที่เปิดท่อ WebSocket รอรับการเปลี่ยนแปลงของล็อก พร้อมวันที่ที่สนใจ
+ * ทำให้ป้าย "กำลังกรอก" ขึ้น/หายทันที ไม่ต้องรอแอปถามรอบถัดไป (ผู้ใช้ขอเรียลไทม์ 2026-11-10)
+ * @type {Map<import('ws').WebSocket, string | null>}
+ */
+const presenceClients = new Map();
+
+/** ส่งรายการล็อกล่าสุดของวันนั้นให้ทุกเครื่องที่สนใจวันนั้น */
+function broadcastPresence(date) {
+  if (presenceClients.size === 0) return;
+  const message = JSON.stringify({ type: 'presence', date, result: presence.list(date) });
+  for (const [ws, subscribed] of presenceClients) {
+    if (subscribed === date && ws.readyState === ws.OPEN) ws.send(message);
+  }
+}
 
 let fcm;
 /** @type {FirestoreStore | null} */
@@ -158,8 +185,69 @@ app.get('/health', async (req, res) => {
   });
 });
 
+/**
+ * ให้แอปฉบับเว็บเรียกเส้นรูปได้จาก origin อื่น (เช่น `npm run web` ที่เครื่องนักพัฒนา)
+ *
+ * เปิดเฉพาะเส้นรูป ซึ่งเปิดให้แอปเรียกตรงโดยไม่มีกุญแจอยู่แล้ว ไม่ได้เพิ่มสิทธิ์อะไร
+ * เส้น /Notify ที่ต้องใช้กุญแจไม่เปิด จะได้ไม่มีหน้าเว็บไหนใน LAN ลองยิงจาก browser ได้
+ * ใช้ '*' เหมือน API หลักที่พอร์ต 5053 เพราะไม่ได้ใช้ cookie และบริการอยู่ใน LAN เท่านั้น
+ */
+app.use(PHOTO_ROUTE, (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 /** เส้น API ของรูปแนบ ดูรายละเอียดใน photo-routes.js */
 app.use(PHOTO_ROUTE, createPhotoRouter(photos));
+
+/**
+ * ล็อก "มีคนกำลังกรอกรายการนี้อยู่" (presence.js)
+ * เปิด CORS เหมือนเส้นรูป ให้แอปฉบับเว็บเรียกได้ ไม่ต้องใช้กุญแจ เพราะเป็นข้อมูลชั่วคราว
+ * ที่ผิดพลาดได้มากสุดคือคนในวง LAN ยิงล็อกปลอมให้รายการค้างดูอย่างเดียว 90 วินาที
+ */
+const PRESENCE_ROUTE = '/api/v1/Presence';
+app.use(PRESENCE_ROUTE, (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+/** body: { date, recordId, deviceId, userName } — จองหรือต่ออายุล็อก ส่งซ้ำทุก ~15 วินาทีขณะเปิดหน้ากรอก */
+app.post(`${PRESENCE_ROUTE}/Heartbeat`, (req, res) => {
+  const date = cleanField(req.body?.date);
+  const recordId = cleanField(req.body?.recordId);
+  const deviceId = cleanField(req.body?.deviceId);
+  const userName = cleanField(req.body?.userName) ?? '-';
+  if (!date || !recordId || !deviceId) {
+    return res.status(400).json({ isSuccess: false, errorMessages: ['ข้อมูลไม่ครบ'] });
+  }
+  res.json({ isSuccess: true, result: presence.heartbeat(date, recordId, deviceId, userName) });
+});
+
+/** body: { date, recordId, deviceId } — ออกจากหน้ากรอก */
+app.post(`${PRESENCE_ROUTE}/Release`, (req, res) => {
+  const date = cleanField(req.body?.date);
+  const recordId = cleanField(req.body?.recordId);
+  const deviceId = cleanField(req.body?.deviceId);
+  if (!date || !recordId || !deviceId) {
+    return res.status(400).json({ isSuccess: false, errorMessages: ['ข้อมูลไม่ครบ'] });
+  }
+  res.json({ isSuccess: true, result: presence.release(date, recordId, deviceId) });
+});
+
+/** ?date=YYYY-MM-DD — ล็อกที่ยังมีผลของวันนั้น ให้หน้ารายการขึ้นป้าย "กำลังกรอก" */
+app.get(PRESENCE_ROUTE, (req, res) => {
+  const date = cleanField(req.query.date);
+  if (!date) {
+    return res.status(400).json({ isSuccess: false, errorMessages: ['ต้องระบุ date'] });
+  }
+  res.json({ isSuccess: true, result: presence.list(date) });
+});
 
 /**
  * แอปมือถือเรียกมาตอนเปิดใช้งาน เพื่อฝาก FCM token ไว้
@@ -377,7 +465,34 @@ function describeRecords(records) {
   };
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+/**
+ * แอปฉบับเว็บ ต้องประกาศหลังเส้น API ทั้งหมด ไม่งั้นหน้าเว็บจะรับ request ของ API ไปแทน
+ *
+ * แอป build แบบ single page มี index.html ไฟล์เดียว ทุก path ที่ไม่ใช่ไฟล์จริง
+ * (เช่น /record/123 ที่ผู้ใช้กดรีเฟรช) ต้องได้ index.html แล้วให้ router ในแอปเลือกหน้าเอง
+ * index.html ห้าม cache เพราะชี้ไปยังไฟล์ JS ชื่อใหม่ทุกครั้งที่ build ส่วนไฟล์ใน _expo
+ * มี hash ในชื่อแล้วจึง cache ยาวได้
+ */
+if (WEB_DIR) {
+  const webRoot = path.resolve(WEB_DIR);
+  app.use(
+    express.static(webRoot, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.includes(`${path.sep}_expo${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    })
+  );
+  app.get(/^\/(?!api\/|health$).*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(webRoot, 'index.html'));
+  });
+  console.log(`เสิร์ฟแอปฉบับเว็บจาก ${webRoot}`);
+}
+
+const httpServer = app.listen(PORT, '0.0.0.0', () => {
   const { total, active } = store.stats();
   console.log(`บริการแจ้งเตือนพร้อมใช้งานที่พอร์ต ${PORT}`);
   console.log(`เครื่องที่ลงทะเบียนไว้: ${active} ใช้งานได้ จากทั้งหมด ${total}`);
@@ -401,3 +516,51 @@ app.listen(PORT, '0.0.0.0', () => {
   });
   watcher.start();
 });
+
+/**
+ * ท่อเรียลไทม์ของล็อก ใช้พอร์ตเดียวกับ HTTP (ws://<server>:8090/api/v1/Presence/ws)
+ * แอปส่ง { type: 'subscribe', date } แล้วได้รายการล็อกของวันนั้นทันที และทุกครั้งที่เปลี่ยน
+ * ไม่มีกุญแจเหมือนเส้น HTTP ของล็อก เพราะข้อมูลเป็นแค่ชื่อคนที่กำลังกรอกในวง LAN
+ */
+const presenceWss = new WebSocketServer({
+  server: httpServer,
+  path: '/api/v1/Presence/ws',
+  maxPayload: 4 * 1024,
+});
+presenceWss.on('connection', (ws) => {
+  presenceClients.set(ws, null);
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+  ws.on('message', (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(String(raw));
+    } catch {
+      return;
+    }
+    const date = msg?.type === 'subscribe' ? cleanField(msg.date) : null;
+    if (!date) return;
+    presenceClients.set(ws, date);
+    ws.send(JSON.stringify({ type: 'presence', date, result: presence.list(date) }));
+  });
+  ws.on('close', () => presenceClients.delete(ws));
+  ws.on('error', () => presenceClients.delete(ws));
+});
+
+/**
+ * ทุก 5 วินาทีล้างล็อกหมดอายุ (แจ้งทุกเครื่องผ่าน onChange)
+ * ทุก 30 วินาที ping ทุกท่อ ท่อที่ไม่ตอบรอบก่อนถือว่าตาย ปิดทิ้ง (มือถือหลุด wifi มักไม่ส่ง close มา)
+ */
+setInterval(() => presence.prune(), 5_000).unref();
+setInterval(() => {
+  for (const ws of presenceWss.clients) {
+    if (!ws.isAlive) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 30_000).unref();

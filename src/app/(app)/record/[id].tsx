@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
+  Platform,
   StyleSheet,
   Switch,
   Text,
@@ -35,20 +37,31 @@ import {
 import type { QueuedPhoto } from '@/api/photo-queue';
 import type { PickedPhoto, RecordPhoto } from '@/api/photo-store';
 import { showErrorAlert } from '@/components/error-alert';
+import { OptionSheet } from '@/components/line-picker';
 import MachineStatusBadge from '@/components/machine-status-badge';
 import PhotoUploadCard from '@/components/photo-upload-card';
 import type { TranslationKey } from '@/constants/i18n';
-import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import {
+  controlHeight,
+  elevation,
+  font,
+  radius,
+  spacing,
+  type ThemeColors,
+} from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useColors } from '@/context/theme-context';
+import { useRecordLock } from '@/hooks/use-record-lock';
 import { useRecordPhotos } from '@/hooks/use-record-photos';
 import {
   BREAK_TIME_VALUE,
   DEPT_OPTIONS,
+  IDLE_ISSUE_OPTIONS,
   JUDGE_OPTIONS,
   TYPE_OPTIONS,
   VENDOR_OPTIONS,
+  type IdleIssueOption,
   type IdleTimeRecord,
 } from '@/types';
 
@@ -110,7 +123,11 @@ export default function RecordDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const c = useColors();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  /** ค่าที่บันทึกตามภาษาที่เลือก ไทยบันทึกชื่อไทย ภาษาอื่นบันทึกชื่ออังกฤษ (ตารางต้นฉบับมีแค่สองภาษา) */
+  const issueValue = (o: IdleIssueOption) => (language === 'th' ? o.th : o.en);
+  /** ชื่อบนจอ: ไทยแสดงชื่ออังกฤษกำกับไว้ด้วย ให้เทียบกับรายงานภาษาอังกฤษได้ */
+  const issueLabel = (o: IdleIssueOption) => (language === 'th' ? `${o.th}  ·  ${o.en}` : o.en);
   const { userName } = useAuth();
   const styles = useMemo(() => createStyles(c), [c]);
   const [record, setRecord] = useState<IdleTimeRecord | null>(null);
@@ -135,6 +152,21 @@ export default function RecordDetailScreen() {
    * เพราะเป็นแค่การบอกว่า "ตัดสินใจแล้วว่าไม่ใช่ช่วงพัก" ไม่ใช่ข้อมูลของรายการ
    */
   const [manualEntry, setManualEntry] = useState(false);
+  /** แผ่นเลือกสาเหตุการหยุด */
+  const [issueSheetOpen, setIssueSheetOpen] = useState(false);
+  /**
+   * คนแรกที่เปิดหน้ากรอกได้สิทธิ์แก้ คนที่เปิดตามมาดูได้อย่างเดียว (ผู้ใช้กำหนด 2026-11-10)
+   * ติดต่อ notify-server ไม่ได้ถือว่าไม่ล็อก ดู use-record-lock.ts
+   */
+  const lock = useRecordLock(id, shiftDate, userName);
+  const lockedOut = lock.status === 'locked';
+
+  // ถูกล็อกระหว่างที่แป้นพิมพ์หรือแผ่นเลือกเปิดอยู่ ปิดให้ จะได้ไม่พิมพ์ต่อในช่องที่แก้ไม่ได้แล้ว
+  useEffect(() => {
+    if (!lockedOut) return;
+    Keyboard.dismiss();
+    setIssueSheetOpen(false);
+  }, [lockedOut]);
 
   useEffect(() => {
     (async () => {
@@ -194,7 +226,7 @@ export default function RecordDetailScreen() {
       const count = String(accepted.length);
       Alert.alert(
         t('photoLimitTitle').replace('{count}', count),
-        t('photoLimitBody').replace('{count}', count).replace('{max}', String(MAX_PHOTOS))
+        t('photoLimitBody').replace('{count}', count).replace('{max}', String(MAX_PHOTOS)),
       );
     }
     await photoState.add(accepted);
@@ -202,7 +234,11 @@ export default function RecordDetailScreen() {
 
   function confirmDiscard(item: QueuedPhoto) {
     Alert.alert(t('photoDiscardTitle'), t('photoDiscardBody'), [
-      { text: t('photoDiscard'), style: 'destructive', onPress: () => photoState.discard(item.key) },
+      {
+        text: t('photoDiscard'),
+        style: 'destructive',
+        onPress: () => photoState.discard(item.key),
+      },
       { text: t('cancel'), style: 'cancel' },
     ]);
   }
@@ -250,8 +286,11 @@ export default function RecordDetailScreen() {
     await launchPicker(() =>
       ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
+        // บนเว็บ ไม่ระบุแล้ว picker ใส่ capture="camera" ซึ่งไม่ใช่ค่ามาตรฐาน
+        // Chrome มือถือจึงเปิดหน้าเลือกไฟล์แทนกล้อง ระบุกล้องหลังให้ได้ capture="environment"
+        cameraType: ImagePicker.CameraType.back,
         quality: 0.6, // ลดขนาดไฟล์ไว้ก่อน เผื่อวันหลังต้องอัปโหลดขึ้น backend
-      })
+      }),
     );
   }
 
@@ -270,7 +309,7 @@ export default function RecordDetailScreen() {
         // จำกัดตั้งแต่ตอนเลือก ไม่ให้ผู้ใช้เลือกเกินที่รายการนี้ยังรับได้
         selectionLimit: remaining,
         quality: 0.6,
-      })
+      }),
     );
   }
 
@@ -300,6 +339,7 @@ export default function RecordDetailScreen() {
    * แต่ต้องบอกให้รู้ว่ายังค้างอยู่ในเครื่อง ไม่งั้นลีดเดอร์จะนึกว่ารูปขึ้นครบแล้ว
    */
   function requestSave() {
+    if (lockedOut) return;
     if (failedCount === 0) {
       void handleSave();
       return;
@@ -310,7 +350,7 @@ export default function RecordDetailScreen() {
       [
         { text: t('saveAnyway'), onPress: () => void handleSave() },
         { text: t('cancel'), style: 'cancel' },
-      ]
+      ],
     );
   }
 
@@ -322,7 +362,13 @@ export default function RecordDetailScreen() {
       // ฐานใหม่คือค่าที่เพิ่งบันทึก ตัวเก็บร่างจะเห็นว่าไม่มีอะไรค้างแล้วลบร่างทิ้งเอง
       setOriginal(record);
       await clearDraft(id);
-      Alert.alert(t('saveSuccess'), undefined, [{ text: t('ok'), onPress: () => router.back() }]);
+      Alert.alert(t('saveSuccess'), undefined, [
+        // บนเว็บ ถ้าเปิดหน้านี้จากลิงก์หรือกดรีเฟรช จะไม่มีหน้าให้ย้อน back() เงียบ ผู้ใช้ค้างอยู่หน้านี้
+        {
+          text: t('ok'),
+          onPress: () => (router.canGoBack() ? router.back() : router.replace('/')),
+        },
+      ]);
     } catch (e) {
       if (e instanceof RecordConflictError) {
         showConflict(e);
@@ -388,6 +434,24 @@ export default function RecordDetailScreen() {
   /** Man Hour/Amount ที่จะถูกเก็บ คิดใหม่ทุกครั้งที่แก้ Man Power */
   const labour = computeLabourCost(record.totalMins, record.manPower);
 
+  /**
+   * ค่าที่บันทึกไว้อาจเป็นชื่อไทยหรืออังกฤษ ขึ้นกับภาษาของคนที่บันทึก จับคู่ได้ทั้งสองแบบ
+   * เปิดด้วยภาษาอื่นจึงยังเห็นว่าเลือกข้อไหนไว้ ไม่ใช่ขึ้นเป็นค่าแปลกปลอม
+   */
+  const matchedIssue = IDLE_ISSUE_OPTIONS.find(
+    (o) => o.en === record.idleTimeIssue || o.th === record.idleTimeIssue,
+  );
+  /**
+   * ค่าเดิมที่ไม่อยู่ในรายการ (พิมพ์เองก่อนมีรายการ หรือ Break Time) ใส่ไว้บนสุดของแผ่นเลือก
+   * ไม่งั้นผู้ใช้จะไม่เห็นว่ามีค่าอยู่แล้ว และค่าจะหายเงียบ ๆ เมื่อเลือกทับ
+   */
+  const issueOptions = [
+    ...(record.idleTimeIssue && !matchedIssue
+      ? [{ value: record.idleTimeIssue, label: record.idleTimeIssue }]
+      : []),
+    ...IDLE_ISSUE_OPTIONS.map((o) => ({ value: issueValue(o), label: issueLabel(o) })),
+  ];
+
   const showBreakChoice =
     record.breakRuleType === 'SHOW_BUTTON' && !record.idleTimeIssue && !manualEntry;
 
@@ -405,6 +469,15 @@ export default function RecordDetailScreen() {
         // ค่าเริ่มต้นของ ScrollView จะกินการกดครั้งแรกไปปิดแป้นพิมพ์ ต้องกดสองครั้ง
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xl }}>
+        {lockedOut && (
+          <View style={styles.lockBanner} accessibilityRole="alert">
+            <Text style={styles.lockBannerTitle}>
+              🔒 {t('lockedBy').replace('{name}', lock.holder)}
+            </Text>
+            <Text style={styles.lockBannerHint}>{t('lockedHint')}</Text>
+          </View>
+        )}
+
         <View style={styles.infoCard}>
           <View style={styles.titleRow}>
             <Text style={styles.workOrder}>{record.workOrder}</Text>
@@ -417,9 +490,10 @@ export default function RecordDetailScreen() {
               <Text style={styles.infoLabel}>{t('lotSizeLabel')}</Text>
               <Text style={styles.infoValue}>{record.lotSize}</Text>
             </View>
-            <View style={styles.infoItem}>
+            {/* ช่วงเวลายาวกว่าช่องอื่น ให้คอลัมน์กว้างกว่า จอแคบจะได้ไม่ตัด "14:49 -" กับ "14:51" คนละบรรทัด */}
+            <View style={[styles.infoItem, styles.infoItemWide]}>
               <Text style={styles.infoLabel}>{t('timeLabel')}</Text>
-              <Text style={styles.infoValue}>
+              <Text style={styles.infoValue} numberOfLines={1}>
                 {record.startTime} - {record.endTime}
               </Text>
             </View>
@@ -436,7 +510,10 @@ export default function RecordDetailScreen() {
               {record.stopPoint !== '' && (
                 <View style={styles.infoItem}>
                   <Text style={styles.infoLabel}>{t('stopPointLabel')}</Text>
-                  <Text style={styles.infoValue}>{record.stopPoint}</Text>
+                  <Text style={styles.infoValue}>
+                    {/* ชื่อจุดตรงกับเว็บ dashboard ซึ่งเป็นภาษาไทย แปลเฉพาะคำนำหน้าตอนแสดง */}
+                    {record.stopPoint.replace(/^จุดที่ /, `${t('stopPointPrefix')} `)}
+                  </Text>
                 </View>
               )}
               {record.status !== '' && (
@@ -451,218 +528,258 @@ export default function RecordDetailScreen() {
 
         {draftRestored && <Text style={styles.draftNotice}>{t('draftRestored')}</Text>}
 
-        <PhotoUploadCard
-          photos={photos}
-          status={photoState.status}
-          loadError={photoState.loadError}
-          onReload={() => void photoState.reload()}
-          queue={queue}
-          activeKey={photoState.activeKey}
-          progress={photoState.progress}
-          staging={staging}
-          max={MAX_PHOTOS}
-          onTakePhoto={takePhoto}
-          onPickLibrary={pickFromLibrary}
-          onRemove={confirmRemovePhoto}
-          onClearAll={confirmRemoveAll}
-          onRetry={photoState.retry}
-          onDiscard={confirmDiscard}
-        />
+        {/* ถูกล็อก: ทั้งฟอร์มแตะไม่ได้และจางลง ข้อมูลยังอ่านได้ */}
+        <View
+          pointerEvents={lockedOut ? 'none' : 'auto'}
+          style={lockedOut ? styles.lockedForm : undefined}>
+          <PhotoUploadCard
+            photos={photos}
+            status={photoState.status}
+            loadError={photoState.loadError}
+            onReload={() => void photoState.reload()}
+            queue={queue}
+            activeKey={photoState.activeKey}
+            progress={photoState.progress}
+            staging={staging}
+            max={MAX_PHOTOS}
+            onTakePhoto={takePhoto}
+            onPickLibrary={pickFromLibrary}
+            onRemove={confirmRemovePhoto}
+            onClearAll={confirmRemoveAll}
+            onRetry={photoState.retry}
+            onDiscard={confirmDiscard}
+          />
 
-        <Text style={styles.fieldLabel}>{t('idleIssueLabel')}</Text>
-        {showBreakChoice ? (
-          /*
+          <Text style={styles.fieldLabel}>{t('idleIssueLabel')}</Text>
+          {showBreakChoice ? (
+            /*
             รายการที่คาบเกี่ยวเวลาพักแบบที่ระบบตัดสินแทนไม่ได้ ให้พนักงานเลือกเอง
             เหมือนฝั่งเว็บ กด Break Time แล้วเติมค่าให้ทันที ไม่ต้องพิมพ์
           */
-          <View style={styles.breakChoice}>
-            <Text style={styles.breakChoiceHint}>{t('breakChoiceQuestion')}</Text>
-            <View style={styles.breakChoiceRow}>
-              <TouchableOpacity
-                style={[styles.breakButton, styles.breakButtonPrimary]}
-                onPress={() => {
-                  set('idleTimeIssue', BREAK_TIME_VALUE);
-                  set('action', BREAK_TIME_VALUE);
-                }}>
-                <Text style={styles.breakButtonPrimaryText}>{t('breakTime')}</Text>
-              </TouchableOpacity>
+            <View style={styles.breakChoice}>
+              <Text style={styles.breakChoiceHint}>{t('breakChoiceQuestion')}</Text>
+              <View style={styles.breakChoiceRow}>
+                <TouchableOpacity
+                  style={[styles.breakButton, styles.breakButtonPrimary]}
+                  onPress={() => {
+                    set('idleTimeIssue', BREAK_TIME_VALUE);
+                    set('action', BREAK_TIME_VALUE);
+                  }}>
+                  <Text style={styles.breakButtonPrimaryText}>{t('breakTime')}</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.breakButton}
-                onPress={() => setManualEntry(true)}>
-                <Text style={styles.breakButtonText}>{t('noBreak')}</Text>
-              </TouchableOpacity>
+                <TouchableOpacity style={styles.breakButton} onPress={() => setManualEntry(true)}>
+                  <Text style={styles.breakButtonText}>{t('noBreak')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        ) : (
-          <>
-            <TextInput
-              style={styles.input}
-              value={record.idleTimeIssue}
-              onChangeText={(v) => set('idleTimeIssue', v)}
-              placeholder={t('idleIssuePlaceholder')}
-              placeholderTextColor={c.textSecondary}
-              multiline
-            />
-
-            {/* เปลี่ยนใจได้ เฉพาะรายการที่เข้าเงื่อนไขให้เลือกเท่านั้น */}
-            {record.breakRuleType === 'SHOW_BUTTON' && (
+          ) : (
+            <>
+              {/*
+              เลือกจากรายการแทนพิมพ์เอง รายงานจะได้จัดกลุ่มสาเหตุได้ตรง
+              สาเหตุที่ไม่มีในรายการให้พิมพ์ในช่อง Remark ด้านล่าง
+            */}
               <TouchableOpacity
-                style={styles.resetChoice}
-                onPress={() => {
-                  set('idleTimeIssue', '');
-                  set('action', '');
-                  setManualEntry(false);
-                }}>
-                <Text style={styles.resetChoiceText}>↺ {t('resetBreakChoice')}</Text>
+                style={styles.issueSelect}
+                onPress={() => setIssueSheetOpen(true)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={t('idleIssueLabel')}>
+                <Text
+                  style={[
+                    styles.issueSelectText,
+                    !record.idleTimeIssue && styles.issueSelectPlaceholder,
+                  ]}
+                  numberOfLines={2}>
+                  {matchedIssue
+                    ? issueLabel(matchedIssue)
+                    : record.idleTimeIssue || t('selectIssue')}
+                </Text>
+                <Text style={styles.issueSelectChevron}>▼</Text>
               </TouchableOpacity>
-            )}
-          </>
-        )}
+              <OptionSheet
+                visible={issueSheetOpen}
+                onClose={() => setIssueSheetOpen(false)}
+                title={t('idleIssueLabel')}
+                options={issueOptions}
+                selected={matchedIssue ? issueValue(matchedIssue) : record.idleTimeIssue}
+                onSelect={(v) => set('idleTimeIssue', v)}
+              />
 
-        <Text style={styles.fieldLabel}>{t('actionLabel')}</Text>
-        <TextInput
-          style={styles.input}
-          value={record.action}
-          onChangeText={(v) => set('action', v)}
-          placeholder={t('actionPlaceholder')}
-          placeholderTextColor={c.textSecondary}
-          multiline
-        />
+              {/* เปลี่ยนใจได้ เฉพาะรายการที่เข้าเงื่อนไขให้เลือกเท่านั้น */}
+              {record.breakRuleType === 'SHOW_BUTTON' && (
+                <TouchableOpacity
+                  style={styles.resetChoice}
+                  onPress={() => {
+                    set('idleTimeIssue', '');
+                    set('action', '');
+                    setManualEntry(false);
+                  }}>
+                  <Text style={styles.resetChoiceText}>↺ {t('resetBreakChoice')}</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
 
-        <TouchableOpacity
-          style={styles.moreToggle}
-          onPress={() => setShowMore((v) => !v)}
-          activeOpacity={0.7}>
-          <Text style={styles.moreToggleText}>{t('moreInfo')}</Text>
-          <Text style={styles.moreToggleIcon}>{showMore ? '▲' : '▼'}</Text>
-        </TouchableOpacity>
+          <Text style={styles.fieldLabel}>{t('actionLabel')}</Text>
+          <TextInput
+            style={styles.input}
+            value={record.action}
+            onChangeText={(v) => set('action', v)}
+            placeholder={t('actionPlaceholder')}
+            placeholderTextColor={c.textSecondary}
+            multiline
+          />
 
-        {showMore && (
-          <View>
-            {/*
+          {/*
+          Remark อยู่นอก "ข้อมูลเพิ่มเติม" ใต้ Action (ผู้ใช้กำหนดลำดับ)
+          เพราะสาเหตุเป็นแบบเลือกจากรายการ รายละเอียดหรือสาเหตุที่ไม่มีในรายการต้องพิมพ์ที่นี่
+        */}
+          <Text style={styles.fieldLabel}>{t('remarkLabel')}</Text>
+          <TextInput
+            style={styles.input}
+            value={record.remark}
+            onChangeText={(v) => set('remark', v)}
+            placeholder={t('remarkPlaceholder')}
+            placeholderTextColor={c.textSecondary}
+            multiline
+          />
+
+          <TouchableOpacity
+            style={styles.moreToggle}
+            onPress={() => setShowMore((v) => !v)}
+            activeOpacity={0.7}>
+            <Text style={styles.moreToggleText}>{t('moreInfo')}</Text>
+            <Text style={styles.moreToggleIcon}>{showMore ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+
+          {showMore && (
+            <View>
+              {/*
               แบ่งเป็นสามกลุ่มตามคำถามที่พนักงานต้องตอบ: ใครรับผิดชอบ, เสียแรงงานเท่าไร, ประเมินว่าอะไร
               ข้อมูลที่บันทึกยังเป็นชุดเดิมทุกช่อง เปลี่ยนแค่ลำดับบนจอ
             */}
-            <Text style={styles.sectionTitle}>{t('sectionResponsible')}</Text>
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>{t('waitVendor')}</Text>
-              <Switch value={record.vendor} onValueChange={(v) => set('vendor', v)} />
-            </View>
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>{t('waitDJ')}</Text>
-              <Switch value={record.dj} onValueChange={(v) => set('dj', v)} />
-            </View>
+              <Text style={styles.sectionTitle}>{t('sectionResponsible')}</Text>
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>{t('waitVendor')}</Text>
+                <Switch value={record.vendor} onValueChange={(v) => set('vendor', v)} />
+              </View>
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>{t('waitDJ')}</Text>
+                <Switch value={record.dj} onValueChange={(v) => set('dj', v)} />
+              </View>
 
-            {/*
+              {/*
               วาง Dept ใต้สวิตช์ Vendor ทันที เพราะเปิดสวิตช์แล้วรายการเปลี่ยนเป็นรายชื่อ vendor เหมือนเว็บ
               ถ้าอยู่ไกลกัน พนักงานจะไม่รู้ว่าสองช่องนี้เกี่ยวกัน
             */}
-            <Text style={styles.fieldLabel}>{t(record.vendor ? 'deptVendorLabel' : 'deptLabel')}</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={record.dept}
-                onValueChange={(v) => set('dept', v)}
-                dropdownIconColor={c.textSecondary}
-                style={styles.picker}>
-                <Picker.Item label={t(record.vendor ? 'selectVendor' : 'selectDept')} value="" />
-                {withCurrent(record.vendor ? VENDOR_OPTIONS : DEPT_OPTIONS, record.dept).map((o) => (
-                  <Picker.Item key={o} label={o} value={o} />
-                ))}
-              </Picker>
-            </View>
-
-            <Text style={styles.sectionTitle}>{t('sectionLabour')}</Text>
-            <Text style={styles.fieldLabel}>{t('manPowerLabel')}</Text>
-            <TextInput
-              style={styles.input}
-              value={record.manPower}
-              // หลังบ้านเก็บเป็นจำนวนเต็ม ตัดตัวอักษรอื่นทิ้ง กันกรณีวางข้อความที่มีชื่อคนปนมา
-              onChangeText={(v) => set('manPower', v.replace(/[^0-9]/g, ''))}
-              placeholder={t('manPowerPlaceholder')}
-              placeholderTextColor={c.textSecondary}
-              // ค่านี้ใช้คำนวณ Man Hour กับ Amount เปิดแป้นตัวเลขให้เลย ลดโอกาสพิมพ์ตัวอักษรปน
-              keyboardType="number-pad"
-            />
-
-            {/* แสดงให้เห็นก่อนกดบันทึก ว่าระบบจะเก็บ Man Hour กับ Amount เป็นเท่าไร เหมือนตารางบนเว็บ */}
-            <View style={styles.labourBox}>
-              <View style={styles.labourRow}>
-                <View style={styles.infoItem}>
-                  <Text style={styles.infoLabel}>{t('manHourLabel')}</Text>
-                  <Text style={styles.infoValue}>{labour.manHour}</Text>
-                </View>
-                <View style={styles.infoItem}>
-                  <Text style={styles.infoLabel}>{t('amountLabel')}</Text>
-                  <Text style={styles.infoValue}>{labour.amountThb.toFixed(2)}</Text>
-                </View>
+              <Text style={styles.fieldLabel}>
+                {t(record.vendor ? 'deptVendorLabel' : 'deptLabel')}
+              </Text>
+              <View style={styles.pickerWrap}>
+                <Picker
+                  selectedValue={record.dept}
+                  onValueChange={(v) => set('dept', v)}
+                  dropdownIconColor={c.textSecondary}
+                  style={styles.picker}>
+                  <Picker.Item label={t(record.vendor ? 'selectVendor' : 'selectDept')} value="" />
+                  {withCurrent(record.vendor ? VENDOR_OPTIONS : DEPT_OPTIONS, record.dept).map(
+                    (o) => (
+                      <Picker.Item key={o} label={o} value={o} />
+                    ),
+                  )}
+                </Picker>
               </View>
-              <Text style={styles.labourHint}>{t('labourAutoHint')}</Text>
-            </View>
 
-            <Text style={styles.sectionTitle}>{t('sectionAssessment')}</Text>
-            <Text style={styles.fieldLabel}>{t('typeLabel')}</Text>
-            <View style={styles.pickerWrap}>
-              <Picker
-                selectedValue={record.type}
-                onValueChange={(v) => set('type', v)}
-                dropdownIconColor={c.textSecondary}
-                style={styles.picker}>
-                <Picker.Item label={t('selectType')} value="" />
-                {withCurrent(TYPE_OPTIONS, record.type).map((o) => (
-                  <Picker.Item key={o} label={o} value={o} />
-                ))}
-              </Picker>
-            </View>
+              <Text style={styles.sectionTitle}>{t('sectionLabour')}</Text>
+              <Text style={styles.fieldLabel}>{t('manPowerLabel')}</Text>
+              <TextInput
+                style={styles.input}
+                value={record.manPower}
+                // หลังบ้านเก็บเป็นจำนวนเต็ม ตัดตัวอักษรอื่นทิ้ง กันกรณีวางข้อความที่มีชื่อคนปนมา
+                onChangeText={(v) => set('manPower', v.replace(/[^0-9]/g, ''))}
+                placeholder={t('manPowerPlaceholder')}
+                placeholderTextColor={c.textSecondary}
+                // ค่านี้ใช้คำนวณ Man Hour กับ Amount เปิดแป้นตัวเลขให้เลย ลดโอกาสพิมพ์ตัวอักษรปน
+                keyboardType="number-pad"
+              />
 
-            {/*
+              {/* แสดงให้เห็นก่อนกดบันทึก ว่าระบบจะเก็บ Man Hour กับ Amount เป็นเท่าไร เหมือนตารางบนเว็บ */}
+              <View style={styles.labourBox}>
+                <View style={styles.labourRow}>
+                  <View style={styles.infoItem}>
+                    <Text style={styles.infoLabel}>{t('manHourLabel')}</Text>
+                    <Text style={styles.infoValue}>{labour.manHour}</Text>
+                  </View>
+                  <View style={styles.infoItem}>
+                    <Text style={styles.infoLabel}>{t('amountLabel')}</Text>
+                    <Text style={styles.infoValue}>{labour.amountThb.toFixed(2)}</Text>
+                  </View>
+                </View>
+                <Text style={styles.labourHint}>{t('labourAutoHint')}</Text>
+              </View>
+
+              <Text style={styles.sectionTitle}>{t('sectionAssessment')}</Text>
+              <Text style={styles.fieldLabel}>{t('typeLabel')}</Text>
+              <View style={styles.pickerWrap}>
+                <Picker
+                  selectedValue={record.type}
+                  onValueChange={(v) => set('type', v)}
+                  dropdownIconColor={c.textSecondary}
+                  style={styles.picker}>
+                  <Picker.Item label={t('selectType')} value="" />
+                  {withCurrent(TYPE_OPTIONS, record.type).map((o) => (
+                    <Picker.Item key={o} label={o} value={o} />
+                  ))}
+                </Picker>
+              </View>
+
+              {/*
               Judge มีแค่สองค่า ใช้ปุ่มคู่ให้แตะครั้งเดียวจบ แทน dropdown ที่ต้องเปิดแล้วเลือกอีกที
               แตะปุ่มที่เลือกอยู่ซ้ำ = ล้างค่า (เทียบเท่า "-- เลือก --" เดิม)
               ค่าเก่าที่ไม่อยู่ในรายการยังขึ้นเป็นปุ่มเพิ่ม ไม่ให้หายไปเงียบ ๆ
             */}
-            <Text style={styles.fieldLabel}>{t('judgeLabel')}</Text>
-            <View style={styles.segmentRow}>
-              {withCurrent(JUDGE_OPTIONS, record.judge).map((o) => {
-                const selected = record.judge === o;
-                const fill =
-                  o === 'Accept' ? c.statusDoneFill : o === 'Delete' ? c.statusPendingFill : c.primary;
-                return (
-                  <TouchableOpacity
-                    key={o}
-                    style={[styles.segment, selected && { backgroundColor: fill, borderColor: fill }]}
-                    onPress={() => set('judge', selected ? '' : o)}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected }}>
-                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
-                      {selected ? '✓ ' : ''}
-                      {o}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+              <Text style={styles.fieldLabel}>{t('judgeLabel')}</Text>
+              <View style={styles.segmentRow}>
+                {withCurrent(JUDGE_OPTIONS, record.judge).map((o) => {
+                  const selected = record.judge === o;
+                  const fill =
+                    o === 'Accept'
+                      ? c.statusDoneFill
+                      : o === 'Delete'
+                        ? c.statusPendingFill
+                        : c.primary;
+                  return (
+                    <TouchableOpacity
+                      key={o}
+                      style={[
+                        styles.segment,
+                        selected && { backgroundColor: fill, borderColor: fill },
+                      ]}
+                      onPress={() => set('judge', selected ? '' : o)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}>
+                      <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
+                        {selected ? '✓ ' : ''}
+                        {o}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.fieldLabel}>{t('reasonLabel')}</Text>
+              <TextInput
+                style={styles.input}
+                value={record.reason}
+                onChangeText={(v) => set('reason', v)}
+                placeholder={t('reasonPlaceholder')}
+                placeholderTextColor={c.textSecondary}
+                multiline
+              />
             </View>
-
-            <Text style={styles.fieldLabel}>{t('reasonLabel')}</Text>
-            <TextInput
-              style={styles.input}
-              value={record.reason}
-              onChangeText={(v) => set('reason', v)}
-              placeholder={t('reasonPlaceholder')}
-              placeholderTextColor={c.textSecondary}
-              multiline
-            />
-
-            <Text style={styles.fieldLabel}>{t('remarkLabel')}</Text>
-            <TextInput
-              style={styles.input}
-              value={record.remark}
-              onChangeText={(v) => set('remark', v)}
-              placeholder={t('remarkPlaceholder')}
-              placeholderTextColor={c.textSecondary}
-              multiline
-            />
-          </View>
-        )}
+          )}
+        </View>
       </KeyboardAwareScrollView>
 
       {/*
@@ -677,10 +794,12 @@ export default function RecordDetailScreen() {
             ถ้ารูปล้มหลังจากนั้นผู้ใช้จะไม่เห็น และนึกว่ารูปขึ้นครบแล้ว
           */}
           <TouchableOpacity
-            style={[styles.saveButton, uploading && styles.saveButtonWaiting]}
+            style={[styles.saveButton, (uploading || lockedOut) && styles.saveButtonWaiting]}
             onPress={requestSave}
-            disabled={saving || uploading}>
-            {saving ? (
+            disabled={saving || uploading || lockedOut}>
+            {lockedOut ? (
+              <Text style={styles.saveWaitingText}>🔒 {t('lockedSave')}</Text>
+            ) : saving ? (
               <ActivityIndicator color={c.onPrimary} />
             ) : uploading ? (
               <View style={styles.saveWaitingRow}>
@@ -699,177 +818,217 @@ export default function RecordDetailScreen() {
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
-  container: { flex: 1, backgroundColor: c.bg },
-  scroll: { flex: 1 },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    backgroundColor: c.surface,
-    borderTopWidth: 1,
-    borderTopColor: c.border,
-  },
-  /** หัวกลุ่มในข้อมูลเพิ่มเติม ตัวใหญ่กว่าชื่อช่องและมีเส้นใต้ ให้เห็นว่าเริ่มกลุ่มใหม่ */
-  sectionTitle: {
-    fontSize: font.body,
-    fontWeight: '700',
-    color: c.primary,
-    marginTop: spacing.xl,
-    paddingBottom: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: c.border,
-  },
-  segmentRow: { flexDirection: 'row', gap: spacing.sm },
-  segment: {
-    flex: 1,
-    minHeight: controlHeight,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  segmentText: { fontSize: font.body, fontWeight: '600', color: c.textPrimary },
-  segmentTextSelected: { color: c.onStatus, fontWeight: '700' },
-  notFound: { textAlign: 'center', marginTop: spacing.xl, color: c.textSecondary },
-  draftNotice: {
-    marginBottom: spacing.lg,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: c.chipBg,
-    color: c.primary,
-    fontSize: font.small,
-    fontWeight: '600',
-  },
-  infoCard: {
-    backgroundColor: c.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: c.border,
-    marginBottom: spacing.lg,
-    ...elevation.card,
-  },
-  // จัดชิด baseline ให้ตัวเล็กนั่งเสมอฐานตัวใหญ่ และให้ model หดได้เมื่อชื่อยาว
-  titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
-  workOrder: { fontSize: font.h2, fontWeight: '700', color: c.textPrimary },
-  model: { fontSize: font.small, color: c.textSecondary, flexShrink: 1 },
-  infoRow: {
-    flexDirection: 'row',
-    marginTop: spacing.lg,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: c.border,
-  },
-  infoItem: { flex: 1, alignItems: 'center' },
-  infoLabel: { fontSize: font.small, color: c.textSecondary },
-  infoValue: { fontSize: font.body, fontWeight: '700', color: c.textPrimary, marginTop: 2 },
-  infoValueHighlight: { color: c.danger },
-  labourBox: {
-    marginTop: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: c.infoBoxBorder,
-    backgroundColor: c.chipBg,
-  },
-  labourRow: { flexDirection: 'row' },
-  labourHint: {
-    fontSize: font.small,
-    color: c.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  fieldLabel: {
-    fontSize: font.small,
-    fontWeight: '600',
-    color: c.textSecondary,
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
-  },
-  /** Picker บน Android ใช้ตัวอักษรสีดำเสมอถ้าไม่กำหนด โหมดมืดจึงมองไม่เห็นค่าที่เลือกไว้ */
-  picker: { color: c.textPrimary },
-  pickerWrap: {
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: radius.sm,
-    backgroundColor: c.surface,
-  },
-  moreToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: controlHeight,
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: c.border,
-    backgroundColor: c.surface,
-  },
-  moreToggleText: { fontSize: font.body, fontWeight: '600', color: c.primary },
-  moreToggleIcon: { fontSize: font.small, color: c.primary },
-  breakChoice: {
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: radius.sm,
-    backgroundColor: c.surface,
-    padding: spacing.md,
-  },
-  breakChoiceHint: {
-    fontSize: font.small,
-    color: c.textSecondary,
-    marginBottom: spacing.md,
-  },
-  breakChoiceRow: { flexDirection: 'row', gap: spacing.sm },
-  breakButton: {
-    flex: 1,
-    minHeight: controlHeight,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: c.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  breakButtonPrimary: { backgroundColor: c.primary, borderColor: c.primary },
-  breakButtonPrimaryText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
-  breakButtonText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
-  resetChoice: { alignSelf: 'flex-start', paddingVertical: spacing.sm },
-  resetChoiceText: { color: c.primary, fontSize: font.small, fontWeight: '600' },
-  input: {
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    fontSize: font.body,
-    backgroundColor: c.surface,
-    color: c.textPrimary,
-    minHeight: controlHeight,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    minHeight: controlHeight,
-    marginTop: spacing.md,
-    backgroundColor: c.surface,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: c.border,
-  },
-  switchLabel: { fontSize: font.body, color: c.textPrimary },
-  saveButton: {
-    backgroundColor: c.primary,
-    borderRadius: radius.sm,
-    minHeight: controlHeight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  saveButtonText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
-  saveButtonWaiting: { backgroundColor: c.border, shadowOpacity: 0, elevation: 0 },
-  saveWaitingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  saveWaitingText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
-});
+    container: { flex: 1, backgroundColor: c.bg },
+    scroll: { flex: 1 },
+    footer: {
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.md,
+      backgroundColor: c.surface,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    /** หัวกลุ่มในข้อมูลเพิ่มเติม ตัวใหญ่กว่าชื่อช่องและมีเส้นใต้ ให้เห็นว่าเริ่มกลุ่มใหม่ */
+    sectionTitle: {
+      fontSize: font.body,
+      fontWeight: '700',
+      color: c.primary,
+      marginTop: spacing.xl,
+      paddingBottom: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: c.border,
+    },
+    segmentRow: { flexDirection: 'row', gap: spacing.sm },
+    segment: {
+      flex: 1,
+      minHeight: controlHeight,
+      borderRadius: radius.sm,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      backgroundColor: c.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    segmentText: { fontSize: font.body, fontWeight: '600', color: c.textPrimary },
+    segmentTextSelected: { color: c.onStatus, fontWeight: '700' },
+    notFound: { textAlign: 'center', marginTop: spacing.xl, color: c.textSecondary },
+    lockBanner: {
+      marginBottom: spacing.lg,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 2,
+      borderColor: c.breakAccent,
+      backgroundColor: c.breakBg,
+    },
+    lockBannerTitle: { fontSize: font.body, fontWeight: '800', color: c.textPrimary },
+    lockBannerHint: { marginTop: spacing.xs, fontSize: font.small, color: c.textSecondary },
+    lockedForm: { opacity: 0.5 },
+    draftNotice: {
+      marginBottom: spacing.lg,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: c.chipBg,
+      color: c.primary,
+      fontSize: font.small,
+      fontWeight: '600',
+    },
+    infoCard: {
+      backgroundColor: c.surface,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      marginBottom: spacing.lg,
+      ...elevation.card,
+    },
+    // จัดชิด baseline ให้ตัวเล็กนั่งเสมอฐานตัวใหญ่ และให้ model หดได้เมื่อชื่อยาว
+    titleRow: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
+    workOrder: { fontSize: font.h2, fontWeight: '700', color: c.textPrimary },
+    model: { fontSize: font.small, color: c.textSecondary, flexShrink: 1 },
+    infoRow: {
+      flexDirection: 'row',
+      marginTop: spacing.lg,
+      paddingTop: spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    infoItem: { flex: 1, alignItems: 'center' },
+    infoItemWide: { flex: 1.4 },
+    infoLabel: { fontSize: font.small, color: c.textSecondary },
+    infoValue: { fontSize: font.body, fontWeight: '700', color: c.textPrimary, marginTop: 2 },
+    infoValueHighlight: { color: c.danger },
+    labourBox: {
+      marginTop: spacing.md,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.infoBoxBorder,
+      backgroundColor: c.chipBg,
+    },
+    labourRow: { flexDirection: 'row' },
+    labourHint: {
+      fontSize: font.small,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginTop: spacing.sm,
+    },
+    fieldLabel: {
+      fontSize: font.small,
+      fontWeight: '600',
+      color: c.textSecondary,
+      marginTop: spacing.md,
+      marginBottom: spacing.xs,
+    },
+    /** Picker บน Android ใช้ตัวอักษรสีดำเสมอถ้าไม่กำหนด โหมดมืดจึงมองไม่เห็นค่าที่เลือกไว้ */
+    picker: {
+      color: c.textPrimary,
+      // บนเว็บ Picker คือ <select> ของ browser ซึ่งพื้นขาวเสมอ โหมดมืดตัวอักษรขาวบนพื้นขาวจึงอ่านไม่ออก
+      // ใส่พื้นตามธีมให้ทั้งช่องและรายการที่กางออก และสูงเท่าช่องกรอกอื่นให้แตะง่าย
+      ...(Platform.OS === 'web' && {
+        backgroundColor: c.surface,
+        height: controlHeight,
+        borderWidth: 0,
+        borderRadius: radius.sm,
+        paddingHorizontal: spacing.md,
+        fontSize: font.body,
+      }),
+    },
+    pickerWrap: {
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      backgroundColor: c.surface,
+    },
+    moreToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: controlHeight,
+      marginTop: spacing.lg,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surface,
+    },
+    moreToggleText: { fontSize: font.body, fontWeight: '600', color: c.primary },
+    moreToggleIcon: { fontSize: font.small, color: c.primary },
+    breakChoice: {
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      backgroundColor: c.surface,
+      padding: spacing.md,
+    },
+    breakChoiceHint: {
+      fontSize: font.small,
+      color: c.textSecondary,
+      marginBottom: spacing.md,
+    },
+    breakChoiceRow: { flexDirection: 'row', gap: spacing.sm },
+    breakButton: {
+      flex: 1,
+      minHeight: controlHeight,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    breakButtonPrimary: { backgroundColor: c.primary, borderColor: c.primary },
+    breakButtonPrimaryText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
+    breakButtonText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
+    resetChoice: { alignSelf: 'flex-start', paddingVertical: spacing.sm },
+    resetChoiceText: { color: c.primary, fontSize: font.small, fontWeight: '600' },
+    /** ปุ่มเลือกสาเหตุ หน้าตาเหมือนช่องกรอก แต่มีลูกศรบอกว่าแตะแล้วเปิดรายการ */
+    issueSelect: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      minHeight: controlHeight,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      backgroundColor: c.surface,
+    },
+    issueSelectText: { flex: 1, fontSize: font.body, color: c.textPrimary },
+    issueSelectPlaceholder: { color: c.textSecondary },
+    issueSelectChevron: { fontSize: font.small, color: c.primary },
+    input: {
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+      fontSize: font.body,
+      backgroundColor: c.surface,
+      color: c.textPrimary,
+      minHeight: controlHeight,
+    },
+    switchRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      minHeight: controlHeight,
+      marginTop: spacing.md,
+      backgroundColor: c.surface,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    switchLabel: { fontSize: font.body, color: c.textPrimary },
+    saveButton: {
+      backgroundColor: c.primary,
+      borderRadius: radius.sm,
+      minHeight: controlHeight,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    saveButtonText: { color: c.onPrimary, fontWeight: '700', fontSize: font.body },
+    saveButtonWaiting: { backgroundColor: c.border, shadowOpacity: 0, elevation: 0 },
+    saveWaitingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    saveWaitingText: { color: c.textSecondary, fontWeight: '600', fontSize: font.body },
+  });

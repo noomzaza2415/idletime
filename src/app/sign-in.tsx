@@ -10,11 +10,15 @@ import {
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   Easing,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
+  withDelay,
   withRepeat,
+  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +26,6 @@ import Svg, { Circle, Line, Path } from 'react-native-svg';
 
 import { showErrorAlert } from '@/components/error-alert';
 import LanguageButton from '@/components/language-button';
-import SoftBlob from '@/components/soft-blob';
 import ThemeButton from '@/components/theme-button';
 import { LOGO_DATA_URI } from '@/constants/logo';
 import { font, spacing } from '@/constants/theme';
@@ -38,11 +41,9 @@ import { useTheme } from '@/context/theme-context';
 const DARK = {
   /** โทนกรมท่าเดียวกับโหมดมืดของแอป */
   screenBg: '#101A2E',
-  card: '#1A2742',
+  /** โปร่งแสง 82% ให้พื้นหลังทะลุขึ้นมาเล็กน้อย ดูเบากว่าการ์ดทึบ */
+  card: 'rgba(26,39,66,0.82)',
   cardBorder: 'rgba(255,255,255,0.1)',
-  /** แผ่นคลุมก้อนแสงให้ขอบละลายไปกับการ์ด ใช้สีเดียวกับพื้นการ์ด */
-  overlay: 'rgba(16,26,46,0.35)',
-  blobIntensity: 0.8,
   text: '#FFFFFF',
   /** 0.75 แทน 0.6 ของต้นฉบับ ให้ข้อความรองอ่านง่ายขึ้น (9.4:1) */
   textDim: 'rgba(255,255,255,0.75)',
@@ -51,6 +52,10 @@ const DARK = {
   fieldBg: 'rgba(255,255,255,0.06)',
   fieldBorder: 'rgba(255,255,255,0.18)',
   logoRingBorder: 'rgba(255,255,255,0.2)',
+  logoHaloBorder: 'rgba(96,165,250,0.55)',
+  logoHaloBg: 'rgba(59,130,246,0.14)',
+  /** สีกลางของแถบแสงที่วิ่งผ่านการ์ด */
+  shine: 'rgba(255,255,255,0.13)',
   shadowOpacity: 0.4,
 };
 
@@ -60,31 +65,36 @@ const DARK = {
  */
 const LIGHT: typeof DARK = {
   screenBg: '#E8EEF7',
-  card: '#FFFFFF',
+  card: 'rgba(255,255,255,0.85)',
   cardBorder: '#CBD5E1',
-  overlay: 'rgba(255,255,255,0.55)',
-  blobIntensity: 0.45,
   text: '#0F172A',
   textDim: '#475569',
   placeholder: '#64748B',
   fieldBg: '#F8FAFC',
   fieldBorder: '#CBD5E1',
   logoRingBorder: '#CBD5E1',
+  logoHaloBorder: 'rgba(37,99,235,0.35)',
+  logoHaloBg: 'rgba(59,130,246,0.08)',
+  /** การ์ดขาว แสงขาววิ่งผ่านจะมองไม่เห็น ใช้ฟ้าอ่อนแทน */
+  shine: 'rgba(59,130,246,0.10)',
   shadowOpacity: 0.12,
 };
 
 type Palette = typeof DARK;
 
+/** สีเงาเรืองรอบโลโก้ */
 const BLOB_BLUE = '#3B82F6';
-const BLOB_CYAN = '#22D3EE';
 /** ปุ่มทึบสีน้ำเงิน ตัวอักษรขาวได้ 5.2:1 ใช้ได้ทั้งสองโหมด */
 const BUTTON_BG = '#2563EB';
 const BUTTON_TEXT = '#FFFFFF';
 
-/** ตรงกับ @keyframes pulseGlow 4s alternate */
-const PULSE_MS = 4000;
 /** ตรงกับ animation: floatUp 0.8s */
 const ENTER_MS = 800;
+/** แถบแสงวิ่งผ่านการ์ดใช้เวลาเท่านี้ แล้วพักก่อนวิ่งรอบใหม่ ไม่วิ่งตลอดจนรบกวนการกรอก */
+const SHINE_MS = 1600;
+const SHINE_PAUSE_MS = 3200;
+/** ความกว้างแถบแสง เอียง 20 องศาให้ดูเป็นแสงสะท้อน */
+const SHINE_W = 110;
 
 export default function SignInScreen() {
   const { login } = useAuth();
@@ -99,27 +109,43 @@ export default function SignInScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   const enter = useSharedValue(0);
-  const pulse = useSharedValue(0);
+  /** 0 = แถบแสงอยู่นอกการ์ดด้านซ้าย, 1 = พ้นขอบขวาไปแล้ว */
+  const shine = useSharedValue(0);
+  const [cardW, setCardW] = useState(0);
+  /** ผู้ใช้ที่ตั้งลดการเคลื่อนไหวในเครื่อง ไม่ต้องเห็นแสงวิ่ง */
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     enter.value = withTiming(1, { duration: ENTER_MS, easing: Easing.out(Easing.cubic) });
-    // ก้อนแสงเต้นสลับไปมาไม่รู้จบ ให้หน้าจอไม่นิ่งสนิท
-    pulse.value = withRepeat(
-      withTiming(1, { duration: PULSE_MS, easing: Easing.inOut(Easing.ease) }),
-      -1,
-      true
+  }, [enter]);
+
+  useEffect(() => {
+    if (reduceMotion) return;
+    // เริ่มหลังการ์ดลอยขึ้นเสร็จ วิ่งซ้ายไปขวาแล้วกระโดดกลับไปซ้ายตอนพัก (มองไม่เห็นเพราะอยู่นอกการ์ด)
+    shine.value = withDelay(
+      ENTER_MS,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: SHINE_MS, easing: Easing.inOut(Easing.quad) }),
+          withDelay(SHINE_PAUSE_MS, withTiming(0, { duration: 0 })),
+        ),
+        -1,
+        false,
+      ),
     );
-  }, [enter, pulse]);
+  }, [shine, reduceMotion]);
+
+  const shineStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: -SHINE_W * 2 + shine.value * (cardW + SHINE_W * 4) },
+      { rotate: '20deg' },
+    ],
+  }));
 
   /** opacity 0 -> 1 พร้อมเลื่อนขึ้น 30px ตาม floatUp ของต้นฉบับ */
   const cardStyle = useAnimatedStyle(() => ({
     opacity: enter.value,
     transform: [{ translateY: (1 - enter.value) * 30 }],
-  }));
-
-  const blobStyle = useAnimatedStyle(() => ({
-    opacity: 0.5 + pulse.value * 0.2,
-    transform: [{ scale: 0.9 + pulse.value * 0.2 }],
   }));
 
   async function handleLogin() {
@@ -135,6 +161,7 @@ export default function SignInScreen() {
 
   return (
     <View style={styles.container}>
+
       <View style={[styles.languageCorner, { top: insets.top + spacing.sm }]}>
         <ThemeButton />
         <LanguageButton />
@@ -147,28 +174,41 @@ export default function SignInScreen() {
         ปุ่มเปลี่ยนภาษา/ธีมอยู่นอกตัวนี้ จะได้ไม่เลื่อนตาม
       */}
       <KeyboardAvoidingView behavior="padding" style={styles.avoider}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-          <Animated.View style={[styles.card, cardStyle]}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            // เว้นที่ให้แถวปุ่มมุมบน จอเล็ก (BT_A2000 480x800) การ์ดสูงเกือบเต็มจอจนปุ่มทับมุมการ์ด
+            { paddingTop: insets.top + spacing.sm + CORNER_BUTTON_H + spacing.sm },
+          ]}
+          keyboardShouldPersistTaps="handled">
+          <Animated.View
+            style={[styles.card, cardStyle]}
+            onLayout={(e) => setCardW(e.nativeEvent.layout.width)}>
             {/*
-              ก้อนแสงสองก้อน ต้นฉบับใช้ filter: blur(45px) ซึ่ง React Native ไม่มี
-              จึงใช้วงกลมสีจางขนาดใหญ่แล้วเอาแผ่นมืดคลุมทับ ให้ขอบก้อนละลายไปกับพื้นการ์ด
+              ก้อนแสงเรืองในการ์ดเอาออกแล้ว (ผู้ใช้ขอ 2026-11-10) แทนด้วยแถบแสงยาวที่วิ่งผ่านการ์ดเป็นระยะ
+              การ์ดมี overflow: hidden แถบที่ยาวเกินการ์ดจึงถูกตัดตามขอบมน
             */}
-            <Animated.View style={[styles.blobSlotOrange, blobStyle]} pointerEvents="none">
-              <SoftBlob color={BLOB_BLUE} size={220} intensity={palette.blobIntensity} />
-            </Animated.View>
-            <Animated.View style={[styles.blobSlotPurple, blobStyle]} pointerEvents="none">
-              <SoftBlob color={BLOB_CYAN} size={260} intensity={palette.blobIntensity} />
-            </Animated.View>
-            <View style={styles.overlay} pointerEvents="none" />
-
+            {!reduceMotion && cardW > 0 && (
+              <Animated.View style={[styles.shine, shineStyle]} pointerEvents="none">
+                <LinearGradient
+                  colors={['transparent', palette.shine, 'transparent']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={styles.shineFill}
+                />
+              </Animated.View>
+            )}
             <View style={styles.content}>
               <View style={styles.header}>
-                <View style={styles.logoRing}>
-                  <Image
-                    source={{ uri: LOGO_DATA_URI }}
-                    style={styles.logo}
-                    resizeMode="contain"
-                  />
+                {/* กรอบสองชั้น: วงแหวนฟ้าโปร่งด้านนอกเข้ากับแสงเรืองพื้นหลัง วงขาวด้านในรองโลโก้ */}
+                <View style={styles.logoHalo}>
+                  <View style={styles.logoRing}>
+                    <Image
+                      source={{ uri: LOGO_DATA_URI }}
+                      style={styles.logo}
+                      resizeMode="contain"
+                    />
+                  </View>
                 </View>
                 <Text style={styles.title}>{t('appName')}</Text>
                 <Text style={styles.subtitle}>{t('signInSubtitle')}</Text>
@@ -228,7 +268,12 @@ export default function SignInScreen() {
  * ตอนซ่อนใช้เส้นโค้งที่เว้นช่องให้ขีดพาดผ่าน ขีดจึงไม่ทับเส้นตาจนดูเป็นก้อน
  */
 function EyeIcon({ slashed, color }: { slashed: boolean; color: string }) {
-  const stroke = { stroke: color, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
+  const stroke = {
+    stroke: color,
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+  } as const;
   return (
     <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
       {slashed ? (
@@ -248,6 +293,9 @@ function EyeIcon({ slashed, color }: { slashed: boolean; color: string }) {
     </Svg>
   );
 }
+
+/** ความสูงแถวปุ่มธีม/ภาษามุมขวาบน (ปุ่มภาษาสูงสุด 44) */
+const CORNER_BUTTON_H = 44;
 
 const createStyles = (p: Palette) =>
   StyleSheet.create({
@@ -283,24 +331,40 @@ const createStyles = (p: Palette) =>
       shadowOpacity: p.shadowOpacity,
       shadowRadius: 24,
       shadowOffset: { width: 0, height: 16 },
-      elevation: 12,
+      // ไม่ใช้ elevation: การ์ดโปร่งแสง เงาของ Android จะทะลุขึ้นมาเป็นกรอบสี่เหลี่ยมซ้อนในการ์ด
     },
-    blobSlotOrange: { position: 'absolute', top: -80, right: -80 },
-    blobSlotPurple: { position: 'absolute', bottom: -100, left: -100 },
-    overlay: {
+    /** สูงเกินการ์ดมาก เอียงแล้วยังพาดเต็มความสูงการ์ด */
+    shine: {
       position: 'absolute',
+      top: '-50%',
+      bottom: '-50%',
       left: 0,
-      right: 0,
-      top: 0,
-      bottom: 0,
-      backgroundColor: p.overlay,
+      width: SHINE_W,
     },
+    shineFill: { flex: 1 },
     content: { zIndex: 10 },
     header: { alignItems: 'center', marginBottom: 28 },
+    /** วงแหวนนอก สีฟ้าโปร่งพร้อมเงาเรืองสีเดียวกัน (เงาสีเห็นบน iOS, Android เห็นเป็นวงแหวนอย่างเดียว) */
+    logoHalo: {
+      width: 96,
+      height: 96,
+      borderRadius: 48,
+      padding: 6,
+      borderWidth: 2,
+      borderColor: p.logoHaloBorder,
+      backgroundColor: p.logoHaloBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.md,
+      shadowColor: BLOB_BLUE,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.5,
+      shadowRadius: 14,
+    },
     logoRing: {
-      width: 76,
-      height: 76,
-      borderRadius: 38,
+      width: 80,
+      height: 80,
+      borderRadius: 40,
       borderWidth: 1,
       borderColor: p.logoRingBorder,
       // ไฟล์ logo.jpg เป็นโลโก้บนพื้นขาว ไม่มีพื้นโปร่งใส จึงต้องรองพื้นขาวให้กลมกลืน
@@ -308,9 +372,9 @@ const createStyles = (p: Palette) =>
       alignItems: 'center',
       justifyContent: 'center',
       overflow: 'hidden',
-      marginBottom: spacing.md,
     },
-    logo: { width: 76, height: 76 },
+    /** เล็กกว่าวงขาว เว้นขอบขาวรอบโลโก้ ไม่ให้ชิดขอบวงจนดูอึดอัด */
+    logo: { width: 66, height: 66 },
     title: {
       color: p.text,
       fontSize: font.h2,

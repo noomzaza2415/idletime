@@ -1,0 +1,110 @@
+สรุปเส้น API รูปแนบ (Photo Attachments) ของแอป idletime
+==========================================================
+
+ภาพรวม
+------
+- รูปไม่ได้เก็บที่ API หลัก (http://192.168.2.5:5053) เพราะ service นั้นยังไม่มีเส้นรับไฟล์
+- รูปทั้งหมดเก็บที่ notify-server แทน
+    Base URL : http://192.168.2.222:8090            (NOTIFY_SERVER_URL ใน src/api/config.ts)
+    Path     : /api/v1/IdleTime/Photos              (PHOTO_ROUTE ใน notify-server/src/photo-routes.js)
+- ไม่ต้องใช้ API key / token
+- ทุกเส้น (ยกเว้นเส้นดึงไฟล์รูป) ตอบกลับรูปแบบเดียวกัน
+    สำเร็จ   : { "isSuccess": true,  "result": ... }
+    ไม่สำเร็จ : { "isSuccess": false, "errorMessages": ["ข้อความ"] }
+
+
+1) เรียกดูรูป (อ่าน)
+====================
+
+1.1 ดึงรายการรูปของรายการ idle time
+    GET  http://192.168.2.222:8090/api/v1/IdleTime/Photos/{idleTimeId}
+
+    ฟังก์ชันในแอป : getRecordPhotos(recordId)   -> src/api/photo-store.ts
+    ผลลัพธ์ตัวอย่าง:
+      {
+        "isSuccess": true,
+        "result": {
+          "recordId": 1024,
+          "cdEquip": "LINE-01",
+          "photos": [
+            { "fileName": "20260909_142530_1024_a1b2.jpg",
+              "url": "/api/v1/IdleTime/Photos/file/20260909_142530_1024_a1b2.jpg" }
+          ]
+        }
+      }
+    หมายเหตุ: url ที่ server ส่งมาเป็น path เปล่า แอปเติม NOTIFY_SERVER_URL ข้างหน้าให้เอง (toAbsolute)
+
+1.2 ดึงไฟล์รูปจริง (ใช้แสดงใน <Image>)
+    GET  http://192.168.2.222:8090/api/v1/IdleTime/Photos/file/{fileName}
+
+    ตอบกลับเป็นไฟล์รูปโดยตรง (image/jpeg หรือ image/png) ไม่ใช่ JSON
+    ตั้ง Cache-Control: public, max-age=31536000, immutable (ชื่อไฟล์ไม่ซ้ำ เนื้อในไม่เปลี่ยน)
+    404 = ไม่พบไฟล์, 400 = ชื่อไฟล์ไม่ถูกต้อง
+
+
+2) บันทึกรูป (อัปโหลด)
+=====================
+
+    POST http://192.168.2.222:8090/api/v1/IdleTime/Photos/{idleTimeId}
+    Content-Type: multipart/form-data   (ห้ามตั้ง header เอง ให้ XHR ใส่ boundary ให้)
+
+    ฟิลด์ใน form:
+      files     (จำเป็น)  ไฟล์รูป ชื่อ field ต้องเป็น "files" เท่านั้น
+      userName  (ไม่บังคับ) ชื่อผู้อัปโหลด
+      cdEquip   (ไม่บังคับ) รหัสไลน์/เครื่อง (ตัดเหลือไม่เกิน 100 ตัวอักษร)
+
+    ฟังก์ชันในแอป : uploadRecordPhoto(recordId, uri, userName, cdEquip, onProgress)
+                    -> src/api/photo-store.ts
+    - ใช้ XMLHttpRequest ไม่ใช่ fetch (fetch ของ Expo SDK 57 ไม่รับ { uri, name, type } ใน FormData)
+    - แอปส่งทีละ 1 รูปต่อ request แม้ server จะรับได้สูงสุด 10 ไฟล์ต่อครั้ง
+    - ย่อรูปก่อนส่งด้วย shrinkPhoto() ให้ด้านยาวสุดไม่เกิน 1600 px, JPEG quality 0.7
+    - timeout 45 วินาทีต่อรูป
+    - ส่งผ่านคิวในเครื่อง (src/api/photo-queue.ts, src/api/photo-uploader.ts)
+      ถ้า wifi หลุด รูปยังอยู่ในเครื่องและส่งใหม่ได้
+
+    ผลลัพธ์: รูปแบบเดียวกับข้อ 1.1 คือคืน "รูปทั้งหมด" ของรายการนั้น ไม่ใช่เฉพาะใบที่เพิ่งส่ง
+
+    ข้อจำกัดฝั่ง server (notify-server/src/photo-store.js):
+      - รับเฉพาะ image/jpeg และ image/png
+      - ขนาดไม่เกิน 10MB ต่อไฟล์
+      - ไม่เกิน 2 รูปต่อ 1 รายการ (เกินจะตอบ 409)
+      - เก็บไฟล์ที่ PHOTO_DIR (ค่าเริ่มต้น ./data/photos, ใน docker คือ /app/photos)
+        และดัชนีที่ PHOTO_INDEX (ค่าเริ่มต้น ./data/photos.json)
+
+
+3) ลบรูป (เพิ่มเติม)
+===================
+
+    DELETE http://192.168.2.222:8090/api/v1/IdleTime/Photos/{idleTimeId}/{fileName}
+    Content-Type: application/json
+    Body: { "userName": "ชื่อผู้ลบ" }
+
+    ฟังก์ชันในแอป : deleteRecordPhoto(recordId, fileName, userName)  -> src/api/photo-store.ts
+    ผลลัพธ์: { "isSuccess": true, "result": "deleted" }
+    ไม่ได้ลบไฟล์จริง แต่ย้ายไปโฟลเดอร์ _trash และจดว่าใครลบ (รูปคือหลักฐาน)
+
+
+ตารางสรุป
+=========
+  การใช้งาน          Method  Path (ต่อจาก http://192.168.2.222:8090)
+  -----------------  ------  ----------------------------------------------------
+  ดูรายการรูป         GET     /api/v1/IdleTime/Photos/{idleTimeId}
+  ดูไฟล์รูป           GET     /api/v1/IdleTime/Photos/file/{fileName}
+  บันทึก/อัปโหลดรูป   POST    /api/v1/IdleTime/Photos/{idleTimeId}
+  ลบรูป              DELETE  /api/v1/IdleTime/Photos/{idleTimeId}/{fileName}
+
+
+ไฟล์ที่เกี่ยวข้อง
+================
+  ฝั่งแอป
+    src/api/config.ts                 NOTIFY_SERVER_URL
+    src/api/photo-store.ts            เรียก API รูปทั้งหมด + ย่อรูป
+    src/api/photo-uploader.ts         ตัวส่งระดับแอป
+    src/api/photo-queue.ts            คิวไฟล์ในเครื่อง
+    src/hooks/use-record-photos.ts    รวมรูปจาก server + คิว
+    src/components/photo-upload-card.tsx  UI เลือก/แสดง/ลบรูป
+    src/components/photo-viewer.tsx   ดูรูปเต็มจอ
+  ฝั่ง server
+    notify-server/src/photo-routes.js เส้น API
+    notify-server/src/photo-store.js  เก็บไฟล์ จำกัดจำนวน/ขนาด
+    notify-server/src/server.js       mount route, PHOTO_DIR, PHOTO_INDEX

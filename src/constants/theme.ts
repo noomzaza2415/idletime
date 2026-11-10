@@ -14,12 +14,23 @@ const light = {
   danger: '#DC2626',
   dangerBg: '#FEE2E2',
   success: '#16A34A',
+  /** ไอคอนแถบวัน/ไลน์ ตามโทนที่ผู้ใช้แนะนำ (2026-11-10): น้ำเงิน = กดได้, เขียว = วันนี้, เทา = ตัวประกอบ */
+  iconBlue: '#2563EB',
+  iconGreen: '#16A34A',
+  iconGray: '#64748B',
   warning: '#EA580C',
   /** slate-300 — เดิม #E5E7EB ต่างจากพื้นแค่ 1.2:1 ขอบช่องกรอกหายไปใต้แสงจ้าหน้าไลน์ */
   border: '#CBD5E1',
   textPrimary: '#111827',
   textSecondary: '#6B7280',
   chipBg: '#EFF6FF',
+  /** หัวจอไล่สีน้ำเงิน (ผู้ใช้ขอ 2026-11-10) ตัวอักษรและไอคอนบนหัวจอเป็นสีขาว */
+  headerGradStart: '#1D4ED8',
+  headerGradEnd: '#3B82F6',
+  /** หัวกลุ่ม Work Order ตอนกาง — ฟ้าเข้มกว่า chipBg ให้แยกจากรายการย่อยได้ชัด (ผู้ใช้ทัก 2026-11-10) */
+  groupHeaderBg: '#DBEAFE',
+  /** รายการย่อยในกลุ่มที่กาง — เทาอ่อนกว่าแถวปกติ ดูเป็นของที่อยู่ข้างใน */
+  groupChildBg: '#F1F5F9',
   /** ขอบกล่องข้อมูลที่ระบบคำนวณให้ (Man Hour/Amount) พื้น chipBg อย่างเดียวกลืนกับพื้นจอ */
   infoBoxBorder: '#BFDBFE',
   badgeDoneBg: '#DCFCE7',
@@ -33,9 +44,13 @@ const light = {
   focusAccent: '#2F2EE9',
   statusPendingFill: '#DC2626',
   statusDoneFill: '#15803D',
-  /** ช่วงพัก — เหลืองอำพัน เข้มพอให้อ่านตัวหนังสือขาวบนพื้นนี้ได้ */
-  statusBreakFill: '#A16207',
-  breakAccent: '#CA8A04',
+  /**
+   * ช่วงพัก — เหลืองสดเหมือนโหมดมืด (ผู้ใช้ขอ 2026-11-10) เดิม #A16207 อมน้ำตาล
+   * ไม่มีที่ไหนวางตัวหนังสือขาวบนสีนี้
+   */
+  statusBreakFill: '#FBBF24',
+  /** ตัวเลขนาทีของรายการช่วงพัก — เหลืองสด เข้มกว่า statusBreakFill นิดหนึ่งให้อ่านบนพื้นขาวได้ */
+  breakAccent: '#EAB308',
   breakBg: '#FEFCE8',
   onStatus: '#FFFFFF',
   onPrimary: '#FFFFFF',
@@ -49,6 +64,10 @@ const light = {
   machineReworkBg: '#FFEDD5',
   machineReworkText: '#C2410C',
   machineReworkBorder: '#FED7AA',
+  /** BREAK = เหลือง รูปแบบเดียวกับ RUNNING (ผู้ใช้ขอ 2026-11-10 เว็บไม่มีสีนี้) */
+  machineBreakBg: '#FEF08A',
+  machineBreakText: '#854D0E',
+  machineBreakBorder: '#FACC15',
 };
 
 /**
@@ -63,6 +82,10 @@ const dark: typeof light = {
   danger: '#F87171',
   dangerBg: '#4A2433',
   success: '#4ADE80',
+  /** โหมดมืดใช้โทนสว่างของสีเดียวกัน ให้เห็นบนพื้นกรมท่า */
+  iconBlue: '#60A5FA',
+  iconGreen: '#4ADE80',
+  iconGray: '#94A3B8',
   warning: '#FBBF24',
   border: '#33466A',
   textPrimary: '#F3F4F6',
@@ -70,6 +93,10 @@ const dark: typeof light = {
   textSecondary: '#B4BFD2',
   /** ต้องให้ primary บนพื้นนี้ได้ ≥ 4.5:1 เพราะตัวอักษร TH/EN บนปุ่มภาษาใช้สีนี้ */
   chipBg: '#1E3462',
+  headerGradStart: '#172554',
+  headerGradEnd: '#1E40AF',
+  groupHeaderBg: '#24407A',
+  groupChildBg: '#18233B',
   infoBoxBorder: '#2C4A80',
   badgeDoneBg: '#183F37',
   badgePendingBg: '#45381C',
@@ -92,6 +119,9 @@ const dark: typeof light = {
   machineReworkBg: '#432B31',
   machineReworkText: '#FB923C',
   machineReworkBorder: '#9A3412',
+  machineBreakBg: '#3D3520',
+  machineBreakText: '#FBBF24',
+  machineBreakBorder: '#854D0E',
 };
 
 export type ThemeMode = 'light' | 'dark';
@@ -155,6 +185,12 @@ export const elevation = {
  * ไม่ลดต่ำกว่านี้เพราะหน้างานอ่านผ่านๆ ในระยะแขน บางครั้งสวมแว่นนิรภัยที่มีฝ้า
  * ค่า body 16 เป็นขนาดมาตรฐานที่อ่านได้สบายบนมือถือ ส่วน small 13 ใช้กับข้อมูลรอง
  */
+/**
+ * จอแคบกว่านี้ (เช่น 320–375px) ถือเป็นจอเล็ก ย่อของที่ไม่จำเป็นในหัวหน้าจอให้ข้อความหลักยังอ่านได้
+ * ไม่ลดขนาดปุ่มกด เพราะพนักงานใส่ถุงมือ เป้ากดเล็กลงแล้วกดพลาดง่าย
+ */
+export const COMPACT_WIDTH = 380;
+
 export const font = {
   h1: 24,
   h2: 19,

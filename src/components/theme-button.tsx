@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { StyleSheet, TouchableOpacity } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 
 import { radius, spacing, type ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/context/language-context';
 import { useTheme } from '@/context/theme-context';
 
 /** ปุ่มสลับโหมดมืด/สว่าง มุมขวาบน — แตะสลับไปมา */
-export default function ThemeButton() {
+/** onDark = วางบนหัวจอสีน้ำเงิน พื้นขาวโปร่ง ไอคอนขาว */
+export default function ThemeButton({ onDark }: { onDark?: boolean }) {
   const { colors: c, isDark, toggleMode } = useTheme();
   const { t } = useLanguage();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -15,44 +16,38 @@ export default function ThemeButton() {
   return (
     <TouchableOpacity
       onPress={toggleMode}
-      style={styles.button}
+      style={[styles.button, onDark && styles.buttonOnDark]}
       hitSlop={spacing.sm}
       accessibilityRole="button"
       accessibilityState={{ checked: isDark }}
       accessibilityLabel={t('darkMode')}>
       {/* วาดด้วย SVG เหมือนไอคอนอื่นในแอป เลี่ยงปัญหา glyph/emoji บน Android */}
-      {isDark ? <MoonIcon color={c.primary} /> : <SunIcon color={c.primary} />}
+      <SunMoonIcon color={onDark ? '#FFFFFF' : c.primary} />
     </TouchableOpacity>
   );
 }
 
-function MoonIcon({ color }: { color: string }) {
+/**
+ * ไอคอนครึ่งพระอาทิตย์ครึ่งพระจันทร์ วาดตามแบบ "sun-moon" ของ Lucide (ISC license)
+ * ใช้ไอคอนเดียวทั้งสองโหมด สื่อว่าเป็นปุ่มสลับกลางวัน/กลางคืน
+ * เดิมสลับรูปตามโหมดปัจจุบัน คนอ่านไม่ออกว่ารูปบอกโหมดที่ใช้อยู่หรือโหมดที่จะเปลี่ยนไป
+ */
+function SunMoonIcon({ color }: { color: string }) {
   return (
-    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
-        fill={color}
-        fillOpacity={0.25}
-        stroke={color}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-function SunIcon({ color }: { color: string }) {
-  return (
-    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-      <Circle cx={12} cy={12} r={4} fill={color} fillOpacity={0.25} stroke={color} strokeWidth={2} />
-      {/* แฉกรัศมี 8 ทิศ */}
-      <Path
-        d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-        stroke={color}
-        strokeWidth={2}
-        strokeLinecap="round"
-      />
+    <Svg
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round">
+      <Path d="M12 2v2" />
+      <Path d="M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715" />
+      <Path d="M16 12a4 4 0 0 0-4-4" />
+      <Path d="m19 5-1.256 1.256" />
+      <Path d="M20 12h2" />
     </Svg>
   );
 }
@@ -68,4 +63,5 @@ const createStyles = (c: ThemeColors) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    buttonOnDark: { backgroundColor: 'rgba(255,255,255,0.18)' },
   });

@@ -56,3 +56,6 @@ GoogleService-Info.plist
 *.apk
 *.aab
 *.tar
+
+# ชุดไฟล์ deploy ที่สร้างตอนขึ้น server (image tar + เว็บที่ build แล้ว) ไม่ใช่ซอร์ส
+notify-server/deploy-*/

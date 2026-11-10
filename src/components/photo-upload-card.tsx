@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from 'react-native';
@@ -13,7 +14,8 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import type { QueuedPhoto } from '@/api/photo-queue';
 import type { RecordPhoto } from '@/api/photo-store';
 import PhotoViewer from '@/components/photo-viewer';
-import { controlHeight, font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import { TRANSLATIONS, type TranslationKey } from '@/constants/i18n';
+import { COMPACT_WIDTH, controlHeight, font, radius, spacing, type ThemeColors } from '@/constants/theme';
 import { useLanguage } from '@/context/language-context';
 import { useColors } from '@/context/theme-context';
 import type { PhotoListStatus } from '@/hooks/use-record-photos';
@@ -128,12 +130,19 @@ export default function PhotoUploadCard({
   const styles = useMemo(() => createStyles(c), [c]);
   const [viewing, setViewing] = useState<number | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
+  // จอเล็กแบ่งปุ่มเท่ากัน ไม่งั้นปุ่มคลังภาพแคบจน "คลังภาพ" ถูกตัด
+  const compact = useWindowDimensions().width < COMPACT_WIDTH;
 
   const total = photos.length + queue.length + staging;
   const full = total >= max;
   const failed = queue.filter((q) => q.error);
   const tileSize =
     gridWidth > 0 ? Math.floor((gridWidth - spacing.sm * (GRID_COLUMNS - 1)) / GRID_COLUMNS) : 0;
+
+  /** error ในคิวเป็น key ของ i18n เมื่อแอปรู้สาเหตุเอง (ดู PhotoUploadError) นอกนั้นคือข้อความจาก server */
+  function errorText(error: string) {
+    return error in TRANSLATIONS.th ? t(error as TranslationKey) : error;
+  }
 
   function statusOf(item: QueuedPhoto) {
     if (item.error) return { text: t('photoFailed'), color: c.danger };
@@ -210,7 +219,7 @@ export default function PhotoUploadCard({
                 {item.error ? (
                   <>
                     <Text style={styles.queueDetail} numberOfLines={2}>
-                      {item.error}
+                      {errorText(item.error)}
                     </Text>
                     <Text style={styles.queueHint}>{t('photoKeptHint')}</Text>
                   </>
@@ -307,20 +316,24 @@ export default function PhotoUploadCard({
         <View style={styles.addRow}>
           {/* ถ่ายรูปใช้บ่อยกว่า จึงเป็นปุ่มสีหลักและกว้างกว่า */}
           <TouchableOpacity
-            style={[styles.addButton, styles.cameraButton]}
+            style={[styles.addButton, styles.cameraButton, compact && styles.addButtonEven]}
             onPress={onTakePhoto}
             activeOpacity={0.85}
             accessibilityRole="button">
             <CameraIcon color={c.onPrimary} />
-            <Text style={styles.addText}>{t('takePhoto')}</Text>
+            <Text style={styles.addText} numberOfLines={1}>
+              {t('takePhoto')}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.addButton, styles.libraryButton]}
+            style={[styles.addButton, styles.libraryButton, compact && styles.addButtonEven]}
             onPress={onPickLibrary}
             activeOpacity={0.85}
             accessibilityRole="button">
             <GalleryIcon color={c.primary} />
-            <Text style={styles.libraryText}>{t('photoLibrary')}</Text>
+            <Text style={styles.libraryText} numberOfLines={1}>
+              {t('photoLibrary')}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -488,7 +501,8 @@ const createStyles = (c: ThemeColors) =>
       gap: spacing.sm,
       minHeight: controlHeight,
       borderRadius: radius.sm,
-      paddingHorizontal: spacing.md,
+      // ขอบในแคบพอให้ "คลังภาพ" อยู่บรรทัดเดียวบนจอ 320px
+      paddingHorizontal: spacing.sm,
     },
     cameraButton: { flex: 3, backgroundColor: c.primary },
     libraryButton: {
@@ -497,6 +511,7 @@ const createStyles = (c: ThemeColors) =>
       borderColor: c.primary,
       backgroundColor: c.surface,
     },
+    addButtonEven: { flex: 1 },
     addButtonDisabled: { backgroundColor: c.border },
     addText: { fontSize: font.body, fontWeight: '700', color: c.onPrimary },
     libraryText: { fontSize: font.body, fontWeight: '700', color: c.primary },

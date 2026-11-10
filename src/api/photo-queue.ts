@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Directory, File, Paths } from 'expo-file-system';
-
+import { deletePhoto, persistPhoto, photoExists } from '@/api/photo-queue-files';
 import { shrinkPhoto, type PickedPhoto, type RecordPhoto } from '@/api/photo-store';
 
 /**
@@ -8,8 +7,8 @@ import { shrinkPhoto, type PickedPhoto, type RecordPhoto } from '@/api/photo-sto
  *
  * รูปจากกล้องไม่ได้ลงคลังภาพของเครื่อง ถ้าอัปโหลดล้มแล้วทิ้งไป รูปนั้นหายถาวร
  * และหลักฐานจุดที่หยุดถ่ายซ้ำไม่ได้แล้ว เพราะหน้างานซ่อมเสร็จไปแล้ว
- * จึงคัดลอกไฟล์มาเก็บในโฟลเดอร์ document ของแอปก่อนส่งเสมอ แล้วจดรายการไว้ใน AsyncStorage
- * ไฟล์ใน cache ระบบลบทิ้งเองได้เมื่อพื้นที่ใกล้เต็ม แต่โฟลเดอร์ document ระบบไม่แตะ
+ * จึงเก็บไฟล์ไว้ในที่ถาวรก่อนส่งเสมอ แล้วจดรายการไว้ใน AsyncStorage
+ * ที่เก็บไฟล์ต่างกันระหว่างมือถือกับเว็บ ดู photo-queue-files.ts / photo-queue-files.web.ts
  *
  * ไฟล์จะถูกลบก็ต่อเมื่อ server ยืนยันว่าได้รูปแล้ว หรือผู้ใช้กดทิ้งเอง
  */
@@ -49,12 +48,6 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const CLOCK_SKEW_MS = 10 * 60 * 1000;
 
-function queueDir() {
-  const dir = new Directory(Paths.document, 'photo-queue');
-  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-  return dir;
-}
-
 function newKey() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -73,15 +66,6 @@ async function write(recordId: string, items: QueuedPhoto[]) {
   }
 }
 
-function deleteFile(uri: string) {
-  try {
-    const file = new File(uri);
-    if (file.exists) file.delete();
-  } catch {
-    // ลบไม่ได้ก็แค่เหลือไฟล์ค้าง ไม่กระทบข้อมูล
-  }
-}
-
 /** คิวของรายการหนึ่ง ตัดรายการที่ไฟล์หายไปแล้วหรือค้างนานเกินออก */
 export async function loadQueue(recordId: string): Promise<QueuedPhoto[]> {
   let items: QueuedPhoto[] = [];
@@ -94,13 +78,8 @@ export async function loadQueue(recordId: string): Promise<QueuedPhoto[]> {
   const now = Date.now();
   const alive = items.filter((item) => {
     const expired = now - queuedAt(item) > MAX_AGE_MS;
-    let exists = false;
-    try {
-      exists = new File(item.uri).exists;
-    } catch {
-      exists = false;
-    }
-    if (expired && exists) deleteFile(item.uri);
+    const exists = photoExists(item.uri);
+    if (expired && exists) deletePhoto(item.uri);
     return exists && !expired;
   });
   // ส่งค้างจากรอบที่แอปถูกปิด ถือว่าไม่รู้ผล ให้ตัวส่งถาม server ก่อนส่งซ้ำ
@@ -117,36 +96,17 @@ export async function saveQueue(recordId: string, items: QueuedPhoto[]) {
   await write(recordId, items);
 }
 
-/**
- * ย่อรูปแล้วคัดลอกเข้าโฟลเดอร์ถาวร คืนรายการที่พร้อมส่ง
- *
- * ถ้าคัดลอกไม่สำเร็จ (เช่นเครื่องเต็ม) ยังใช้ไฟล์เดิมใน cache ส่งต่อได้
- * ดีกว่าไม่ให้แนบรูปเลย เพียงแต่ถ้าส่งล้ม ไฟล์นั้นอาจถูกระบบลบก่อนได้ส่งซ้ำ
- */
+/** ย่อรูปแล้วเก็บเข้าที่ถาวร คืนรายการที่พร้อมส่ง */
 export async function stagePhoto(photo: PickedPhoto): Promise<QueuedPhoto> {
   const key = newKey();
   const shrunk = await shrinkPhoto(photo);
-  let uri = shrunk;
-  try {
-    const ext = /\.png($|\?)/i.test(shrunk) ? 'png' : 'jpg';
-    const target = new File(queueDir(), `${key}.${ext}`);
-    new File(shrunk).copySync(target);
-    uri = target.uri;
-  } catch (e) {
-    console.warn('คัดลอกรูปเข้าคิวไม่สำเร็จ ใช้ไฟล์ใน cache แทน:', e instanceof Error ? e.message : e);
-  }
-  let size = 0;
-  try {
-    size = new File(uri).size ?? 0;
-  } catch {
-    size = 0;
-  }
+  const { uri, size } = await persistPhoto(key, shrunk);
   return { key, uri, size };
 }
 
 /** ลบไฟล์ของรูปที่ส่งเสร็จแล้วหรือผู้ใช้กดทิ้ง */
 export function discardFile(item: QueuedPhoto) {
-  deleteFile(item.uri);
+  deletePhoto(item.uri);
 }
 
 /**

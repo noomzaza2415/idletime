@@ -244,7 +244,7 @@ async function run(recordId: string) {
           }
         } catch {
           // เช็กไม่ได้แปลว่ายังต่อ server ไม่ติด ส่งไปก็ไม่ถึง พักไว้ให้กดใหม่
-          patchItem(recordId, next.key, { error: 'เชื่อมต่อ server ไม่ได้ ตรวจสอบ wifi' });
+          patchItem(recordId, next.key, { error: 'photoErrNetwork' });
           continue;
         }
       }

@@ -2,8 +2,12 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider as NavThemeProvider } fro
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
+// ต้อง import ก่อนหน้าจอใด ๆ ใช้ Alert บนเว็บ (ดูเหตุผลในไฟล์)
+import '@/components/alert-polyfill';
+import LogoWatermark from '@/components/logo-watermark';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 import { LanguageProvider } from '@/context/language-context';
 import { ThemeProvider, useTheme } from '@/context/theme-context';
@@ -30,6 +34,18 @@ export default function RootLayout() {
 function ThemedRoot() {
   const { isDark, colors } = useTheme();
 
+  /**
+   * บนเว็บ browser ระบายแถบของตัวเองตามสีพื้นของหน้า (แถบเครื่องมือล่างของ Safari, แถบปุ่มนำทางของ Android)
+   * และแถบบนตาม theme-color ถ้าไม่ตั้ง จะเป็นสีขาวตัดกับแอปโหมดมืด
+   * ตั้งตามธีมปัจจุบัน สลับมืด/สว่างแล้วแถบเปลี่ยนตาม
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    document.documentElement.style.backgroundColor = colors.bg;
+    document.body.style.backgroundColor = colors.bg;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colors.surface);
+  }, [colors.bg, colors.surface]);
+
   const navTheme = isDark
     ? {
         ...DarkTheme,
@@ -44,6 +60,12 @@ function ThemedRoot() {
     <NavThemeProvider value={navTheme}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <RootNavigator />
+      {/*
+        ลายน้ำโลโก้ทุกหน้า (ผู้ใช้กำหนด 2026-11-10) วางที่นี่จุดเดียว หน้าที่เพิ่มในอนาคตได้ด้วยอัตโนมัติ
+        วางทับเนื้อหาเพราะแถวรายการและการ์ดพื้นทึบ อยู่หลังจะมองไม่เห็น จึงต้องจางมาก และแตะทะลุได้
+        โหมดมืดย้อมขาว เพราะสามเหลี่ยมน้ำเงินเข้มของโลโก้กลืนกับพื้นกรมท่า
+      */}
+      <LogoWatermark opacity={isDark ? 0.025 : 0.03} tintColor={isDark ? '#FFFFFF' : undefined} />
     </NavThemeProvider>
   );
 }

@@ -53,6 +53,12 @@ export const ENDPOINTS = {
   unregisterPushToken: '/api/v1/Notification/UnregisterDevice',
   /** POST สร้างรายการเพิ่มเอง — body เป็น record เดี่ยว */
   createRecord: '/api/v1/IdleTime/PostLineIdleTimeManualAsync',
+  /** notify-server: POST { date, recordId, deviceId, userName } — จอง/ต่ออายุล็อกหน้ากรอก */
+  presenceHeartbeat: '/api/v1/Presence/Heartbeat',
+  /** notify-server: POST { date, recordId, deviceId } — ปล่อยล็อกตอนออกจากหน้ากรอก */
+  presenceRelease: '/api/v1/Presence/Release',
+  /** notify-server: GET ?date= — ใครกำลังกรอกรายการไหนอยู่ */
+  presence: '/api/v1/Presence',
 };
 
 /** API ของ Idle Time ไม่ต้องแนบ token (เว็บก็ยิงตรงโดยไม่มี header auth) */

@@ -8,14 +8,15 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { Platform } from 'react-native';
 
-import { TRANSLATIONS, type Language, type TranslationKey } from '@/constants/i18n';
+import { LANGUAGES, TRANSLATIONS, type Language, type TranslationKey } from '@/constants/i18n';
 
 const STORAGE_KEY = 'language';
 
 /**
  * ไทยเป็นค่าเริ่มต้น เพราะพนักงานส่วนใหญ่เป็นคนไทย
- * ผู้ใช้สลับเป็นอังกฤษเองได้และจำค่าไว้ เครื่องที่เคยเลือกภาษาไว้แล้วจะใช้ค่าเดิม
+ * ผู้ใช้เลือกอังกฤษหรือเกาหลีเองได้และจำค่าไว้ เครื่องที่เคยเลือกภาษาไว้แล้วจะใช้ค่าเดิม
  */
 const DEFAULT_LANGUAGE: Language = 'th';
 
@@ -34,19 +35,28 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
-      if (saved === 'th' || saved === 'en') setLanguageState(saved);
+      // รับเฉพาะภาษาที่แอปรู้จัก ค่าแปลกปลอมใน storage จะไม่ทำให้ t() คืน undefined
+      if (LANGUAGES.includes(saved as Language)) setLanguageState(saved as Language);
     })();
   }, []);
+
+  // บนเว็บบอก browser ว่าหน้าเป็นภาษาอะไรตามที่เลือกจริง ไม่งั้นยังเป็นค่าตอน build (th)
+  // ผลคือตัดคำ/อ่านออกเสียงผิดภาษา เมื่อผู้ใช้สลับเป็นอังกฤษ
+  useEffect(() => {
+    if (Platform.OS === 'web') document.documentElement.lang = language;
+  }, [language]);
 
   const setLanguage = useCallback(async (next: Language) => {
     setLanguageState(next);
     await AsyncStorage.setItem(STORAGE_KEY, next);
   }, []);
 
+  // วนไปภาษาถัดไปตามลำดับใน LANGUAGES ปุ่มหลักใช้แผ่นเลือกภาษาแทนแล้ว เก็บไว้ให้ที่อื่นที่อาจเรียกใช้
   // คำนวณค่าถัดไปนอก updater เพราะ React ไม่เรียก updater ทันทีตอน setState
   // ถ้าไปอ่านค่าจากในนั้น ค่าที่เขียนลง storage จะเป็นค่าเริ่มต้นเสมอ
   const toggleLanguage = useCallback(async () => {
-    await setLanguage(language === 'th' ? 'en' : 'th');
+    const next = LANGUAGES[(LANGUAGES.indexOf(language) + 1) % LANGUAGES.length];
+    await setLanguage(next);
   }, [language, setLanguage]);
 
   const t = useCallback((key: TranslationKey) => TRANSLATIONS[language][key], [language]);

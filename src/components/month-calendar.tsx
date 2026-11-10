@@ -19,11 +19,13 @@ const MONTHS = {
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ],
+  ko: ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'],
 } as const;
 
 const WEEKDAYS = {
   th: ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'],
   en: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'],
+  ko: ['일', '월', '화', '수', '목', '금', '토'],
 } as const;
 
 interface Props {
@@ -82,7 +84,11 @@ export default function MonthCalendar({ visible, value, maxDate, onSelect, onClo
     setViewMonth(next.getMonth());
   }
 
-  const monthLabel = `${MONTHS[language][viewMonth]} ${viewYear}`;
+  // ภาษาเกาหลีขึ้นต้นด้วยปี (2026년 11월) ภาษาอื่นเป็นเดือนตามด้วยปี
+  const monthLabel =
+    language === 'ko'
+      ? `${viewYear}년 ${MONTHS.ko[viewMonth]}`
+      : `${MONTHS[language][viewMonth]} ${viewYear}`;
   /** เดือนถัดไปกดได้ก็ต่อเมื่อยังมีวันที่เลือกได้อยู่ในนั้น */
   const canGoNext = new Date(viewYear, viewMonth + 1, 1, 12) <= max;
 

@@ -1,11 +1,31 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 
 import LanguageButton from '@/components/language-button';
 import ThemeButton from '@/components/theme-button';
-import { controlHeight, elevation, font, radius, spacing, type ThemeColors } from '@/constants/theme';
+import {
+  COMPACT_WIDTH,
+  controlHeight,
+  elevation,
+  font,
+  radius,
+  spacing,
+  type ThemeColors,
+} from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useLanguage } from '@/context/language-context';
 import { useTheme } from '@/context/theme-context';
@@ -17,6 +37,13 @@ export default function AppLayout() {
   const styles = useMemo(() => createStyles(c), [c]);
   const [menuOpen, setMenuOpen] = useState(false);
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+
+  /**
+   * header ฉบับเว็บไม่หักความกว้างปุ่มขวาออกจากหัวเรื่อง จอแคบหัวเรื่องจึงวิ่งไปทับปุ่ม
+   * กันที่ไว้ให้ปุ่มซ้าย (≈56) กับปุ่มธีม+ภาษา แล้วตัดหัวเรื่องที่ยาวเกินเป็น … (มือถือ header ของระบบตัดให้เอง)
+   */
+  const webTitleMaxWidth = width - (width < COMPACT_WIDTH ? 190 : 220);
 
   async function handleLogout() {
     setMenuOpen(false);
@@ -25,16 +52,37 @@ export default function AppLayout() {
 
   return (
     <>
+      {/* หัวจอเป็นสีน้ำเงินทุกโหมด ตัวอักษรแถบสถานะต้องเป็นสีขาว */}
+      <StatusBar style="light" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: c.surface },
-          headerTitleStyle: { color: c.textPrimary },
-          headerTintColor: c.primary,
+          /*
+            หัวจอไล่สีน้ำเงิน (ผู้ใช้ขอ 2026-11-10) ตัวอักษร ปุ่มย้อนกลับ และไอคอนบนหัวจอเป็นสีขาว
+            ไม่มีเส้นใต้หัวจอ สีพื้นแยกส่วนหัวกับเนื้อหาชัดอยู่แล้ว
+          */
+          headerBackground: () => (
+            <LinearGradient
+              colors={[c.headerGradStart, c.headerGradEnd]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{ flex: 1 }}
+            />
+          ),
+          headerShadowVisible: false,
+          headerTitleStyle: { color: '#FFFFFF', fontWeight: '700' },
+          headerTintColor: '#FFFFFF',
           contentStyle: { backgroundColor: c.bg },
+          ...(Platform.OS === 'web' && {
+            headerTitle: ({ children }: { children: string }) => (
+              <Text numberOfLines={1} style={[styles.webTitle, { maxWidth: webTitleMaxWidth }]}>
+                {children}
+              </Text>
+            ),
+          }),
           headerRight: () => (
             <View style={styles.headerActions}>
-              <ThemeButton />
-              <LanguageButton />
+              <ThemeButton onDark />
+              <LanguageButton onDark />
             </View>
           ),
         }}>
@@ -55,7 +103,34 @@ export default function AppLayout() {
             ),
           }}
         />
-        <Stack.Screen name="record/[id]" options={{ title: t('headerRecordDetail') }} />
+        <Stack.Screen
+          name="record/[id]"
+          options={({ navigation }) => ({
+            title: t('headerRecordDetail'),
+            // เปิดจากลิงก์หรือกดรีเฟรชบนเว็บ ไม่มีหน้าก่อนหน้า ปุ่มย้อนกลับของ header จึงไม่ขึ้น
+            // ใส่ปุ่มกลับหน้ารายการแทน ไม่งั้นผู้ใช้ติดอยู่หน้านี้
+            ...(!navigation.canGoBack() && {
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => navigation.replace('index')}
+                  style={styles.backToList}
+                  hitSlop={spacing.sm}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('headerRecords')}>
+                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+                    <Path
+                      d="M19 12H5M12 19l-7-7 7-7"
+                      stroke="#FFFFFF"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                </TouchableOpacity>
+              ),
+            }),
+          })}
+        />
       </Stack>
 
       <Modal
@@ -95,13 +170,30 @@ export default function AppLayout() {
 
 const createStyles = (c: ThemeColors) =>
   StyleSheet.create({
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-    hamburger: { paddingVertical: spacing.sm, paddingRight: spacing.md, gap: 5 },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      // header ฉบับเว็บไม่เว้นขอบให้ปุ่มที่ใส่เอง ปุ่มจึงชิดขอบจอ มือถือ header ของระบบเว้นให้แล้ว
+      ...(Platform.OS === 'web' && { marginRight: spacing.md }),
+    },
+    hamburger: {
+      paddingVertical: spacing.sm,
+      paddingRight: spacing.md,
+      gap: 5,
+      ...(Platform.OS === 'web' && { marginLeft: spacing.md }),
+    },
+    backToList: {
+      paddingVertical: spacing.sm,
+      paddingRight: spacing.md,
+      ...(Platform.OS === 'web' && { marginLeft: spacing.md }),
+    },
+    webTitle: { fontSize: font.h2, fontWeight: '700', color: '#FFFFFF' },
     bar: {
       width: 22,
       height: 2,
       borderRadius: 1,
-      backgroundColor: c.textPrimary,
+      backgroundColor: '#FFFFFF',
     },
     backdrop: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.5)' },
     panel: {

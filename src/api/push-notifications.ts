@@ -70,7 +70,7 @@ export async function ensureNotificationPermission(): Promise<boolean> {
  * ถ้ายังไม่เคยให้สิทธิ์ เครื่องนี้ก็แสดงแจ้งเตือนไม่ได้อยู่แล้ว จึงคืน null ได้เลย
  */
 export async function getExistingPushToken(): Promise<string | null> {
-  if (!Device.isDevice) return null;
+  if (Platform.OS === 'web' || !Device.isDevice) return null;
   const { granted } = await Notifications.getPermissionsAsync();
   if (!granted) return null;
   const token = await Notifications.getDevicePushTokenAsync();
@@ -82,6 +82,10 @@ export async function getExistingPushToken(): Promise<string | null> {
  * คืน null ถ้าไม่ได้รับสิทธิ์ หรือรันบน emulator ที่ขอ token ไม่ได้
  */
 export async function registerForPushNotifications(): Promise<string | null> {
+  // บนเว็บ notify-server ส่งได้แค่ FCM/APNs ของแอป ขอสิทธิ์ไปก็ไม่มีวันได้แจ้งเตือน
+  // จึงไม่เด้งหน้าต่างขอสิทธิ์ให้งง หน้ารายการยังมีแบนเนอร์จากการ poll ทุก 30 วินาทีอยู่
+  if (Platform.OS === 'web') return null;
+
   const granted = await ensureNotificationPermission();
   if (!granted) return null;
 

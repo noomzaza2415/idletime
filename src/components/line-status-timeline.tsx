@@ -15,6 +15,7 @@ import {
   GestureDetector,
   ScrollView as GestureScrollView,
 } from 'react-native-gesture-handler';
+import Svg, { Path } from 'react-native-svg';
 
 import {
   viewTimeline,
@@ -110,15 +111,25 @@ function LiveClock({ prefix }: { prefix: string }) {
 
 /** สีของแต่ละสถานะ ใช้ร่วมกันระหว่างแถบ คำอธิบายสี และตัวเลขสรุป */
 export function statusColors(c: ThemeColors, isDark: boolean) {
+  /*
+    โหมดสว่างใช้สีสดชุดเดียวกับโหมดมืด (ผู้ใช้ขอ 2026-11-10)
+    สี status*Fill ของธีมสว่างเป็นโทนเข้มเพื่อให้ตัวอักษรขาวบนปุ่มอ่านออก พอเป็นแถบยาวดูทึบหม่น
+    แถบไม่มีตัวอักษรทับ จึงใช้สีสดได้โดยไม่กระทบ contrast ไม่แก้ในธีมเพราะปุ่มอื่นยังต้องใช้สีเข้ม
+  */
+  const done = isDark ? c.statusDoneFill : VIVID.done;
   return {
     // เวลาเดินงานลดความทึบลงเล็กน้อยให้ช่วงหยุดสีแดงยังเด่นกว่า
     // ไม่ลดมากกว่านี้ เพราะเคยตั้งไว้ราว 35% แล้วทั้งแถบดูซีดจางเกินไป
-    runningTrack: withAlpha(c.statusDoneFill, isDark ? 0.72 : 0.6),
-    running: c.statusDoneFill,
-    stop: c.statusPendingFill,
-    break: c.statusBreakFill,
+    // พื้นขาวทำให้สีโปร่งดูอ่อนกว่าบนพื้นกรมท่า โหมดสว่างจึงทึบกว่า
+    runningTrack: withAlpha(done, isDark ? 0.72 : 0.85),
+    running: done,
+    stop: isDark ? c.statusPendingFill : VIVID.stop,
+    break: isDark ? c.statusBreakFill : VIVID.break,
   } satisfies Record<SegmentKind | 'running' | 'runningTrack', string>;
 }
+
+/** สีสถานะของโหมดมืด (theme.ts) ใช้กับแถบในโหมดสว่างด้วย */
+const VIVID = { done: '#4ADE80', stop: '#F87171', break: '#FBBF24' } as const;
 
 const BAR_DIMS = {
   card: { label: 11, labelWidth: 40, barHeight: 36, grid: false },
@@ -286,11 +297,14 @@ export function TimelineBar({
           const raw = pinchStart.current.zoom * e.scale;
           const next = Math.min(maxZoom, Math.max(minZoom, Math.round(raw * 20) / 20));
           if (next === zoomRef.current) return;
-          pinchAnchor.current = { ratio: pinchStart.current.ratio, offset: pinchStart.current.focalX };
+          pinchAnchor.current = {
+            ratio: pinchStart.current.ratio,
+            offset: pinchStart.current.focalX,
+          };
           onZoomChange(next);
         })
         .onFinalize(() => setPinching(false)),
-    [viewport.width, onZoomChange, minZoom, maxZoom]
+    [viewport.width, onZoomChange, minZoom, maxZoom],
   );
 
   const content = (
@@ -367,7 +381,9 @@ export function TimelineBar({
       style={[styles.root, style]}
       onLayout={(e: LayoutChangeEvent) => {
         const { width: w, height: h } = e.nativeEvent.layout;
-        setViewport((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
+        setViewport((prev) =>
+          prev.width === w && prev.height === h ? prev : { width: w, height: h },
+        );
       }}>
       {/*
         ใช้ ScrollView เฉพาะตอนซูม เพราะ ScrollView แนวนอนบน Android ดักการแตะไว้เอง
@@ -405,6 +421,7 @@ interface CardProps {
   line: string;
   isToday: boolean;
   /** แตะการ์ดเพื่อเปิดแบบเต็มจอ */
+  /** แตะการ์ดเพื่อเปิดแบบเต็มจอ มีแล้วจะแสดงไอคอนขยายที่มุมขวาบนให้รู้ว่ากดได้ */
   onPress?: () => void;
 }
 
@@ -412,7 +429,7 @@ interface CardProps {
 export default function LineStatusTimeline({ timeline, line, isToday, onPress }: CardProps) {
   const { colors: c, isDark } = useTheme();
   const { t } = useLanguage();
-  const styles = useMemo(() => createCardStyles(c), [c]);
+  const styles = useMemo(() => createCardStyles(c, isDark), [c, isDark]);
   const colors = useMemo(() => statusColors(c, isDark), [c, isDark]);
   const now = useNow(isToday);
   const view = useMemo(() => viewTimeline(timeline, now, 24), [timeline, now]);
@@ -433,6 +450,20 @@ export default function LineStatusTimeline({ timeline, line, isToday, onPress }:
         <Text style={styles.title} numberOfLines={1}>
           {line.toUpperCase()} · {t('timelineTitle')}
         </Text>
+        {onPress && (
+          <View style={styles.expandIcon}>
+            {/* ลูกศรชี้ออกสี่มุม สัญลักษณ์ "เต็มจอ" ที่คนคุ้นจากวิดีโอในมือถือ */}
+            <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+              <Path
+                d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                stroke={c.primary}
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </Svg>
+          </View>
+        )}
       </View>
       <View style={styles.legend}>
         <LegendItem color={colors.running} label={t('timelineRunning')} styles={styles} />
@@ -537,16 +568,18 @@ const createBarStyles = (c: ThemeColors, size: 'card' | 'full') => {
   });
 };
 
-const createCardStyles = (c: ThemeColors) =>
+const createCardStyles = (c: ThemeColors, isDark: boolean) =>
   StyleSheet.create({
+    /** ขอบมน เงาบาง ไม่มีเส้นขอบ (ผู้ใช้ขอ 2026-11-10) โหมดมืดเงามองไม่เห็นจึงคงเส้นขอบ */
     card: {
       marginHorizontal: spacing.lg,
       marginBottom: spacing.sm,
       padding: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: c.border,
+      borderRadius: radius.lg,
       backgroundColor: c.surface,
+      ...(isDark
+        ? { borderWidth: 1, borderColor: c.border }
+        : { boxShadow: '0px 2px 10px rgba(15, 23, 42, 0.08)' }),
     },
     cardPressed: { opacity: 0.85 },
     titleRow: {
@@ -561,6 +594,14 @@ const createCardStyles = (c: ThemeColors) =>
       fontWeight: '800',
       color: c.textPrimary,
       letterSpacing: 0.5,
+    },
+    expandIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: radius.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.chipBg,
     },
     legend: {
       flexDirection: 'row',

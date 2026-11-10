@@ -2,7 +2,7 @@
   "expo": {
     "name": "idletime",
     "slug": "idletime",
-    "version": "1.1.1",
+    "version": "1.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "idletime",
@@ -34,7 +34,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.noomzaza.idletime",
-      "versionCode": 3,
+      "versionCode": 5,
       "googleServicesFile": "./google-services.json",
       "runtimeVersion": {
         "policy": "appVersion"
@@ -44,7 +44,8 @@
       ]
     },
     "web": {
-      "output": "static",
+      "output": "single",
+      "lang": "th",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
